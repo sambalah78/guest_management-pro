@@ -1,0 +1,24 @@
+/* assets/global.css */
+@keyframes flyIn {
+    0% { opacity: 0; transform: translateY(-100px) rotate(-10deg); }
+    100% { opacity: 1; transform: translateY(0) rotate(0deg); }
+}
+
+@keyframes fadeIn {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Remove Reflex branding */
+a[href*="reflex.dev"],
+a[href*="reflex"],
+.reflex-logo,
+.reflex-branding,
+.built-with-reflex {
+    display: none !important;
+}

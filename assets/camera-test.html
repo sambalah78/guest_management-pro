@@ -1,0 +1,161 @@
+<!-- assets/direct_camera_test.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Direct Camera Test</title>
+    <style>
+        body {
+            background-color: #111111;
+            color: white;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+        }
+        #video {
+            width: 100%;
+            max-width: 500px;
+            border: 2px solid #D4AF37;
+            border-radius: 8px;
+            margin: 20px auto;
+        }
+        button {
+            background-color: #D4AF37;
+            color: black;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px;
+        }
+        #status {
+            margin: 20px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .success {
+            background-color: #4CAF50;
+        }
+        .error {
+            background-color: #F44336;
+        }
+        .info {
+            background-color: #2196F3;
+        }
+    </style>
+</head>
+<body>
+    <h1 style="color: #D4AF37;">Direct Camera Test</h1>
+
+    <button onclick="startCamera()">Start Camera</button>
+    <button onclick="stopCamera()">Stop Camera</button>
+
+    <div>
+        <video id="video" autoplay playsinline style="display: none;"></video>
+        <canvas id="canvas" style="display: none;"></canvas>
+    </div>
+
+    <div id="status"></div>
+
+    <div id="devices" style="margin-top: 20px;"></div>
+
+    <script>
+        let stream = null;
+        const video = document.getElementById('video');
+        const statusDiv = document.getElementById('status');
+        const devicesDiv = document.getElementById('devices');
+
+        function updateStatus(message, type) {
+            statusDiv.innerHTML = message;
+            statusDiv.className = type;
+        }
+
+        async function listCameras() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const cameras = devices.filter(device => device.kind === 'videoinput');
+
+                let html = '<h3>📷 Available Cameras:</h3>';
+                if (cameras.length === 0) {
+                    html += '<p>No cameras found!</p>';
+                } else {
+                    cameras.forEach((camera, index) => {
+                        html += `<p>Camera ${index + 1}: ${camera.label || 'Unnamed camera'}</p>`;
+                    });
+                }
+                devicesDiv.innerHTML = html;
+            } catch (err) {
+                devicesDiv.innerHTML = `<p>Error listing cameras: ${err.message}</p>`;
+            }
+        }
+
+        async function startCamera() {
+            updateStatus('⏳ Requesting camera access...', 'info');
+            video.style.display = 'block';
+
+            try {
+                // First, list available cameras
+                await listCameras();
+
+                // Try to get camera with basic constraints
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: false
+                });
+
+                video.srcObject = stream;
+
+                video.onloadedmetadata = () => {
+                    video.play();
+                    updateStatus('✅ Camera is working!', 'success');
+                };
+
+            } catch (err) {
+                console.error('Camera error:', err);
+
+                let errorMessage = '';
+                switch(err.name) {
+                    case 'NotAllowedError':
+                    case 'PermissionDeniedError':
+                        errorMessage = '❌ Camera permission denied. Please check browser settings.';
+                        break;
+                    case 'NotFoundError':
+                    case 'DevicesNotFoundError':
+                        errorMessage = '❌ No camera found on this device.';
+                        break;
+                    case 'NotReadableError':
+                        errorMessage = '❌ Camera is already in use by another application (Zoom, Teams, etc.)';
+                        break;
+                    case 'OverconstrainedError':
+                        errorMessage = '❌ Camera constraints cannot be satisfied.';
+                        break;
+                    default:
+                        errorMessage = `❌ Error: ${err.message}`;
+                }
+
+                updateStatus(errorMessage, 'error');
+                video.style.display = 'none';
+            }
+        }
+
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+                video.srcObject = null;
+                video.style.display = 'none';
+                updateStatus('⏸️ Camera stopped', 'info');
+            }
+        }
+
+        // Check if browser supports camera
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            updateStatus('❌ Your browser does not support camera access', 'error');
+        } else {
+            updateStatus('✅ Browser supports camera', 'info');
+            // List cameras on load
+            listCameras();
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+assets/external/
+.states
+.web
+*.db
+# .gitignore
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.env.production
+.venv
+venv/
+ENV/
+dist/
+build/
+*.egg-info/
+.installed.cfg
+*.egg
+.DS_Store
+reflex.db
+*.log
+*.pot
+*.pyc
+local_settings.py
+db.sqlite3
+media/
+staticfiles/
+.static/
+# Google credentials
+guest_management/secrets/
+*.json
+# Google credentials
+secrets/*.json
+
+# OAuth tokens
+guest_management/secrets/token*.json
+# Google Drive OAuth credentials
+guest_management/secrets/eventlah-drive-oauth-client.json
+guest_management/secrets/eventlah-drive-token.json
+
+# Google service account credentials
+guest_management/secrets/*.json

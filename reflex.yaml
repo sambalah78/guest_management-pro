@@ -1,0 +1,17 @@
+name: guest_management
+region: us-west-2
+
+# Configure APP_URL and all secrets in the Reflex deployment environment/secret manager.
+# No credentials are committed to this file.
+
+resources:
+  backend:
+    memory: 1Gi
+    cpu: 1
+  frontend:
+    memory: 512Mi
+    cpu: 0.5
+
+scaling:
+  min_instances: 2
+  max_instances: 4

@@ -1,0 +1,423 @@
+# pages/create_event.py
+import reflex as rx
+from guest_management.state import State, EventState, UIState
+from guest_management.utils.constants import GOLD, BLACK, DARK_GRAY
+
+
+def create_event_page():
+    """Create event page - fits any screen size without scrolling."""
+    return rx.center(
+        rx.vstack(
+            # Header
+            rx.hstack(
+                rx.button(
+                    rx.hstack(rx.icon(tag="arrow-left", size=12), rx.text("Back", size="1")),
+                    on_click=EventState.go_back_to_event_types,
+                    variant="outline",
+                    border_color=GOLD,
+                    color=GOLD,
+                    size="1",
+                    _hover={"bg": GOLD, "color": BLACK},
+                ),
+                rx.spacer(),
+                rx.heading("Create Event", font_size=["1em", "1.2em", "1.4em"], color=GOLD),
+                rx.spacer(),
+                rx.box(width="50px"),
+                width="100%",
+                padding="0.3em 0.5em",
+            ),
+
+            # Event Type Badge
+            rx.hstack(
+                rx.badge(
+                    rx.hstack(
+                        rx.text(EventState.event_config_icon, size="1"),
+                        rx.text(EventState.event_config_name, size="1"),
+                        spacing="1",
+                    ),
+                    color_scheme="gold",
+                    size="1",
+                    padding="0.1em 0.5em",
+                ),
+                justify="center",
+            ),
+
+            # Responsive Grid - stacks on mobile
+            rx.grid(
+                # LEFT COLUMN
+                rx.vstack(
+                    # Basic Information
+                    rx.card(
+                        rx.vstack(
+                            rx.hstack(
+                                rx.icon(tag="info", size=14, color=GOLD),
+                                rx.text("Basic Info", color=GOLD, weight="bold", font_size="2"),
+                                spacing="1",
+                            ),
+                            rx.input(
+                                placeholder="Event Name *",
+                                value=EventState.new_event_name,
+                                on_change=EventState.set_event_field("name"),
+                                width="100%",
+                                bg=BLACK,
+                                border_color=GOLD,
+                                color="white",
+                                size="1",
+                            ),
+                            rx.input(
+                                placeholder="Organizer Name",
+                                value=EventState.new_event_company_name,
+                                on_change=EventState.set_event_field("company_name"),
+                                width="100%",
+                                bg=BLACK,
+                                border_color=GOLD,
+                                color="white",
+                                size="1",
+                            ),
+                            spacing="2",
+                            align="start",
+                        ),
+                        bg=DARK_GRAY,
+                        border=f"1px solid {GOLD}",
+                        border_radius="10px",
+                        padding="0.8em",
+                        width="100%",
+                    ),
+
+                    # Location & Time
+                    rx.card(
+                        rx.vstack(
+                            rx.hstack(
+                                rx.icon(tag="calendar", size=14, color=GOLD),
+                                rx.text("Date & Time", color=GOLD, weight="bold", size="2"),
+                                spacing="1",
+                            ),
+                            rx.input(
+                                placeholder="Event Date",
+                                value=EventState.new_event_date,
+                                on_change=EventState.set_event_field("date"),
+                                width="100%",
+                                type="date",
+                                bg=BLACK,
+                                border_color=GOLD,
+                                color="white",
+                                size="1",
+                            ),
+                            rx.input(
+                                placeholder="Event Time",
+                                value=EventState.new_event_time,
+                                on_change=EventState.set_event_field("time"),
+                                width="100%",
+                                type="time",
+                                bg=BLACK,
+                                border_color=GOLD,
+                                color="white",
+                                size="1",
+                            ),
+                            rx.input(
+                                placeholder="Venue",
+                                value=EventState.new_event_venue,
+                                on_change=EventState.set_event_field("venue"),
+                                width="100%",
+                                bg=BLACK,
+                                border_color=GOLD,
+                                color="white",
+                                size="1",
+                            ),
+                            rx.input(
+                                placeholder="Theme",
+                                value=EventState.new_event_theme,
+                                on_change=EventState.set_event_field("theme"),
+                                width="100%",
+                                bg=BLACK,
+                                border_color=GOLD,
+                                color="white",
+                                size="1",
+                            ),
+                            spacing="2",
+                            align="start",
+                        ),
+                        bg=DARK_GRAY,
+                        border=f"1px solid {GOLD}",
+                        border_radius="10px",
+                        padding="0.8em",
+                        width="100%",
+                    ),
+
+                    # Wedding Settings
+                    rx.cond(
+                        EventState.event_type == "wedding_dinner",
+                        rx.card(
+                            rx.vstack(
+                                rx.hstack(
+                                    rx.icon(tag="heart", size=14, color=GOLD),
+                                    rx.text("Wedding", color=GOLD, weight="bold", size="2"),
+                                    spacing="1",
+                                ),
+                                rx.input(
+                                    placeholder="Groom's Name",
+                                    width="100%",
+                                    bg=BLACK,
+                                    border_color=GOLD,
+                                    color="white",
+                                    size="1",
+                                ),
+                                rx.input(
+                                    placeholder="Bride's Name",
+                                    width="100%",
+                                    bg=BLACK,
+                                    border_color=GOLD,
+                                    color="white",
+                                    size="1",
+                                ),
+                                spacing="2",
+                                align="start",
+                            ),
+                            bg=DARK_GRAY,
+                            border=f"1px solid {GOLD}",
+                            border_radius="10px",
+                            padding="0.8em",
+                            width="100%",
+                        ),
+                    ),
+
+                    # Sports Day Settings
+                    rx.cond(
+                        EventState.event_type == "sports_day",
+                        rx.card(
+                            rx.vstack(
+                                rx.hstack(
+                                    rx.icon(tag="activity", size=14, color=GOLD),
+                                    rx.text("Sports Day", color=GOLD, weight="bold", size="2"),
+                                    spacing="1",
+                                ),
+                                rx.input(
+                                    placeholder="Food Stalls",
+                                    type="number",
+                                    width="100%",
+                                    bg=BLACK,
+                                    border_color=GOLD,
+                                    color="white",
+                                    size="1",
+                                ),
+                                rx.input(
+                                    placeholder="Voucher Amount (RM)",
+                                    type="number",
+                                    width="100%",
+                                    bg=BLACK,
+                                    border_color=GOLD,
+                                    color="white",
+                                    size="1",
+                                ),
+                                spacing="2",
+                                align="start",
+                            ),
+                            bg=DARK_GRAY,
+                            border=f"1px solid {GOLD}",
+                            border_radius="10px",
+                            padding="0.8em",
+                            width="100%",
+                        ),
+                    ),
+
+                    # Company Dinner Settings
+                    rx.cond(
+                        EventState.event_type == "company_dinner",
+                        rx.card(
+                            rx.vstack(
+                                rx.hstack(
+                                    rx.icon(tag="building", size=14, color=GOLD),
+                                    rx.text("Company", color=GOLD, weight="bold", size="2"),
+                                    spacing="1",
+                                ),
+                                rx.input(
+                                    placeholder="Company Name",
+                                    width="100%",
+                                    bg=BLACK,
+                                    border_color=GOLD,
+                                    color="white",
+                                    size="1",
+                                ),
+                                rx.input(
+                                    placeholder="Department",
+                                    width="100%",
+                                    bg=BLACK,
+                                    border_color=GOLD,
+                                    color="white",
+                                    size="1",
+                                ),
+                                spacing="2",
+                                align="start",
+                            ),
+                            bg=DARK_GRAY,
+                            border=f"1px solid {GOLD}",
+                            border_radius="10px",
+                            padding="0.8em",
+                            width="100%",
+                        ),
+                    ),
+
+                    spacing="2",
+                    width="100%",
+                ),
+
+                # RIGHT COLUMN - Logo Upload
+                rx.vstack(
+                    rx.cond(
+                        (EventState.event_type == "company_dinner") | (EventState.event_type == "sports_day"),
+                        rx.card(
+                            rx.vstack(
+                                rx.hstack(
+                                    rx.icon(tag="image", size=14, color=GOLD),
+                                    rx.text("Event Logo", color=GOLD, weight="bold", size="2"),
+                                    spacing="1",
+                                ),
+                                rx.cond(
+                                    EventState.event_logo,
+                                    rx.image(
+                                        src=EventState.event_logo,
+                                        width="80px",
+                                        height="80px",
+                                        border_radius="8px",
+                                        border=f"1px solid {GOLD}",
+                                    ),
+                                ),
+                                rx.upload(
+                                    rx.button(
+                                        rx.hstack(
+                                            rx.icon(tag="upload", size=12),
+                                            rx.text("Upload", size="1"),
+                                        ),
+                                        bg=GOLD,
+                                        color=BLACK,
+                                        width="100%",
+                                        size="1",
+                                    ),
+                                    id="logo_upload",
+                                    multiple=False,
+                                    accept={"image/*": [".png", ".jpg", ".jpeg"]},
+                                    max_files=1,
+                                    on_drop=EventState.handle_logo_upload_for_event,
+                                    border="none",
+                                    padding="0.1em"
+                                ),
+                                rx.cond(
+                                    EventState.event_logo,
+                                    rx.button(
+                                        "Remove",
+                                        on_click=EventState.clear_event_logo,
+                                        variant="outline",
+                                        border_color="red",
+                                        color="red",
+                                        size="1",
+                                    ),
+                                ),
+                                spacing="2",
+                                align="center",
+                            ),
+                            bg=DARK_GRAY,
+                            border=f"1px solid {GOLD}",
+                            border_radius="10px",
+                            padding="0.8em",
+                            width="100%",
+                        ),
+                    ),
+
+                    rx.cond(
+                        EventState.event_type == "wedding_dinner",
+                        rx.card(
+                            rx.vstack(
+                                rx.hstack(
+                                    rx.icon(tag="image", size=14, color=GOLD),
+                                    rx.text("Invitation Card", color=GOLD, weight="bold", size="2"),
+                                    spacing="1",
+                                ),
+                                rx.cond(
+                                    EventState.wedding_invitation_card,
+                                    rx.image(
+                                        src=EventState.wedding_invitation_card,
+                                        width="100%",
+                                        max_height="150px",
+                                        object_fit="contain",
+                                        border_radius="8px",
+                                        border=f"1px solid {GOLD}",
+                                    ),
+                                ),
+                                rx.upload(
+                                    rx.button(
+                                        rx.hstack(
+                                            rx.icon(tag="upload", size=12),
+                                            rx.text("Upload", size="1"),
+                                        ),
+                                        bg=GOLD,
+                                        color=BLACK,
+                                        width="100%",
+                                        size="1",
+                                    ),
+                                    id="invitation_upload",
+                                    multiple=False,
+                                    accept={"image/*": [".png", ".jpg", ".jpeg"]},
+                                    max_files=1,
+                                    on_drop=EventState.handle_invitation_upload,
+                                    boder="none",
+                                    padding="0.25em"
+                                ),
+                                rx.cond(
+                                    EventState.wedding_invitation_card,
+                                    rx.button(
+                                        "Remove",
+                                        on_click=EventState.clear_wedding_invitation,
+                                        variant="outline",
+                                        border_color="red",
+                                        color="red",
+                                        size="1",
+                                    ),
+                                ),
+                                spacing="2",
+                                align="center",
+                            ),
+                            bg=DARK_GRAY,
+                            border=f"1px solid {GOLD}",
+                            border_radius="10px",
+                            padding="0.8em",
+                            width="100%",
+                        ),
+                    ),
+
+                    # Create Event Button
+                    rx.button(
+                        rx.hstack(
+                            rx.cond(UIState.is_loading, rx.spinner(size="2", color=BLACK), rx.icon(tag="plus", size=14)),
+                            rx.text("Create", size="2", weight="bold"),
+                            spacing="1",
+                        ),
+                        on_click=EventState.create_event,
+                        bg=GOLD,
+                        color=BLACK,
+                        width="100%",
+                        height="40px",
+                        is_loading=UIState.is_loading,
+                        _hover={"bg": DARK_GRAY, "color": GOLD},
+                    ),
+
+                    spacing="2",
+                    width="100%",
+                ),
+
+                columns=rx.breakpoints(initial="1", md="2"),
+                spacing="2",
+                width="100%",
+                padding="0.5em",
+            ),
+
+            spacing="1",
+            width="100%",
+            max_width="1000px",
+            height="100vh",
+            padding="0.5em",
+        ),
+        width="100%",
+        height="100vh",
+        bg=BLACK,
+        style={"overflow": "hidden"},
+    )
