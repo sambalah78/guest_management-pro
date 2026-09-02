@@ -6,11 +6,34 @@ from guest_management.services.google_drive_service import encrypt_refresh_token
 
 class AuthService:
     def __init__(self): self.repo = AuthRepository()
+
     def google_authorization_url(self, state: str) -> str:
-        params = {"client_id": settings.google_client_id, "redirect_uri": settings.google_redirect_uri,
-                  "response_type": "code", "scope": "openid email profile https://www.googleapis.com/auth/drive.file",
-                  "state": state, "access_type": "offline", "prompt": "consent"}
-        return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
+        params = {
+            "client_id": settings.google_client_id,
+            "redirect_uri": settings.google_redirect_uri,
+            "response_type": "code",
+
+            "scope": (
+                "openid email profile "
+                "https://www.googleapis.com/auth/drive"
+            ),
+
+            "state": state,
+
+            # Important for obtaining a refresh token.
+            "access_type": "offline",
+
+            # Force Google to issue a fresh authorization grant.
+            "prompt": "consent",
+
+            # Explicitly request account selection.
+            "include_granted_scopes": "true",
+        }
+
+        return (
+                "https://accounts.google.com/o/oauth2/v2/auth?"
+                + urlencode(params)
+        )
 
     def exchange_code(self, code: str) -> dict:
         import httpx
@@ -69,7 +92,15 @@ class AuthService:
                 user["id"],
                 encrypt_refresh_token(refresh),
             )
+        else:
+            # Keep the existing token if Google did not return a new one.
+            existing = user.get("google_refresh_token_enc")
 
+            if not existing:
+                raise RuntimeError(
+                    "Google authorization succeeded, but Google did not "
+                    "return a Drive refresh token."
+                )
         return {
             "user": self.repo.get_user(
                 user["id"]

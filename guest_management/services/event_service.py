@@ -26,25 +26,25 @@ class EventService:
     """Application service for event operations."""
 
     def __init__(
-        self,
-        repository: Optional[EventRepository] = None,
-        guest_repository: Optional[GuestRepository] = None,
-        drive_service: Optional[GoogleDriveAssetService] = None,
+            self,
+            repository: Optional[EventRepository] = None,
+            guest_repository: Optional[GuestRepository] = None,
+            drive_service: Optional[GoogleDriveAssetService] = None,
     ):
         self.repo = (
-            repository
-            or EventRepository()
+                repository
+                or EventRepository()
         )
 
         self.guest_repo = (
-            guest_repository
-            or GuestRepository()
+                guest_repository
+                or GuestRepository()
         )
 
-        self.drive_service = (
-            drive_service
-            or GoogleDriveAssetService()
-        )
+        # Drive service is injected by callers that have a user context.
+        # Do not create GoogleDriveAssetService() here because database
+        # OAuth requires the authenticated user's ID.
+        self.drive_service = drive_service
 
     @staticmethod
     def _decode_image_data_url(
@@ -331,7 +331,7 @@ class EventService:
                         logo_bytes,
                         logo_filename,
                         logo_mime_type,
-                        event_folder_id=event_folder_id,
+                        folder_id=event_folder_id,
                     )
                 )
 

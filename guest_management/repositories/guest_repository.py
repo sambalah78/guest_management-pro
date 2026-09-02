@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from .base import BaseRepository
-from guest_management.core.exceptions import DatabaseError, GuestAlreadyCheckedInError
+
 
 logger = logging.getLogger(__name__)
 
@@ -70,32 +70,6 @@ class GuestRepository(BaseRepository):
         except Exception as exc:
             self._raise_db("case-insensitive guest lookup", exc)
 
-    def check_in(self, event_id: int, guest_id: str, scanner_id: str = "") -> Dict[str, Any]:
-        """Perform an atomic check-in through the production RPC."""
-        try:
-            response = self.db.rpc(
-                "check_in_guest",
-                {
-                    "p_event_id": int(event_id),
-                    "p_guest_id": guest_id.strip(),
-                    "p_scanner_id": scanner_id.strip() or None,
-                },
-            ).execute()
-            rows = response.data or []
-            if not rows:
-                raise DatabaseError("Check-in RPC returned no result")
-            result = rows[0] if isinstance(rows, list) else rows
-            if result.get("result") == "already_checked_in":
-                raise GuestAlreadyCheckedInError(result.get("message", "Guest already checked in"))
-            if result.get("result") != "checked_in":
-                raise DatabaseError(result.get("message", "Check-in failed"))
-            return result
-        except GuestAlreadyCheckedInError:
-            raise
-        except DatabaseError:
-            raise
-        except Exception as exc:
-            self._raise_db("atomic guest check-in", exc)
 
     def search(self, event_id: int, query: str, limit: int = 20) -> List[Dict[str, Any]]:
         query = query.strip()

@@ -7,16 +7,18 @@ import math
 from typing import Any, Dict, List, Tuple
 
 from guest_management.core.exceptions import GuestAlreadyCheckedInError, GuestNotFoundError, ValidationError
-from guest_management.repositories import EventRepository, GuestRepository
+from guest_management.repositories import EventRepository, GuestRepository, CheckinRepository
 from guest_management.services.qr_service import QRService
 
 
 class GuestService:
 
-    def __init__(self, repo: GuestRepository | None = None, event_repo: EventRepository | None = None):
+    def __init__(self, repo: GuestRepository | None = None, event_repo: EventRepository | None = None, checkin_repo: CheckinRepository | None = None,):
         self.repo = repo or GuestRepository()
         self.event_repo = event_repo or EventRepository()
+        self.checkin_repo = checkin_repo or CheckinRepository()
         self.qr_service = QRService()
+
 
     def get_guests_by_event(self, event_id: int, page: int = 1, page_size: int = 50) -> Tuple[List[Dict[str, Any]], int]:
         page = max(1, int(page))
@@ -31,7 +33,11 @@ class GuestService:
 
     def check_in_guest(self, guest_id: str, event_id: int, scanner_id: str = "") -> Dict[str, Any]:
         try:
-            return self.repo.check_in(int(event_id), guest_id, scanner_id)
+            return self.checkin_repo.check_in(
+                int(event_id),
+                guest_id,
+                scanner_id,
+            )
         except GuestAlreadyCheckedInError:
             raise
 
@@ -52,25 +58,62 @@ class GuestService:
     def process_guests_from_data(self, guests_data: List[Dict[str, Any]], event_id: int, event_type: str) -> Tuple[int, int]:
         if not guests_data:
             return 0, 0
+
         prepared: list[dict[str, Any]] = []
         seen: set[str] = set()
         skipped = 0
 
         for index, row in enumerate(guests_data):
-            raw_guest_id = row.get("guest_id") or row.get("ID") or f"ID_{event_id}_{index}"
+            # Resolve the participant ID from common spreadsheet column
+            # variations while preserving the original row in full_data.
+            normalized_row = {
+                str(key).strip().lower().replace(" ", "_"): value
+                for key, value in row.items()
+            }
+
+            raw_guest_id = (
+                normalized_row.get("guest_id")
+                or normalized_row.get("id")
+                or f"ID_{event_id}_{index}"
+            )
+
             if isinstance(raw_guest_id, float) and raw_guest_id.is_integer():
                 guest_id = str(int(raw_guest_id))
             else:
                 guest_id = str(raw_guest_id).strip()
+
             if not guest_id or guest_id in seen:
                 skipped += 1
                 continue
-            seen.add(guest_id)
-            prepared.append(self._prepare_guest_data(row, guest_id, int(event_id), event_type))
 
-        created = self.repo.upsert_batch(prepared, batch_size=500)
-        skipped += max(0, len(prepared) - created)
-        self.event_repo.update_counts(int(event_id), guest_count=self.repo.count_by_event(int(event_id)))
+            seen.add(guest_id)
+
+            prepared.append(
+                self._prepare_guest_data(
+                    row,
+                    guest_id,
+                    int(event_id),
+                    event_type,
+                )
+            )
+
+        created = self.repo.upsert_batch(
+            prepared,
+            batch_size=500,
+        )
+
+        skipped += max(
+            0,
+            len(prepared) - created,
+        )
+
+        self.event_repo.update_counts(
+            int(event_id),
+            guest_count=self.repo.count_by_event(
+                int(event_id)
+            ),
+        )
+
         return created, skipped
 
     def _prepare_guest_data(self, row: Dict[str, Any], guest_id: str, event_id: int, event_type: str) -> Dict[str, Any]:

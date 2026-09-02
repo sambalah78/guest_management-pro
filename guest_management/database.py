@@ -44,6 +44,82 @@ users = _table(
     __import__("sqlalchemy").Column("updated_at", DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)),
 )
 
+google_drive_connections = _table(
+    "google_drive_connections",
+    Column(
+        "id",
+        String(128),
+        primary_key=True,
+    ),
+    Column(
+        "user_id",
+        String(128),
+        nullable=False,
+    ),
+    Column(
+        "google_email",
+        String(320),
+        nullable=False,
+    ),
+    Column(
+        "encrypted_refresh_token",
+        Text,
+        nullable=True,
+    ),
+    Column(
+        "root_folder_id",
+        String(255),
+        nullable=False,
+        default="",
+    ),
+    Column(
+        "connection_role",
+        String(32),
+        nullable=False,
+        default="PRIMARY",
+    ),
+    Column(
+        "is_primary",
+        Boolean,
+        nullable=False,
+        default=False,
+    ),
+    Column(
+        "is_active",
+        Boolean,
+        nullable=False,
+        default=True,
+    ),
+    Column(
+        "last_verified_at",
+        DateTime(timezone=True),
+        nullable=True,
+    ),
+    Column(
+        "last_error",
+        Text,
+        nullable=True,
+    ),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    ),
+    Column(
+        "updated_at",
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    ),
+
+    UniqueConstraint(
+        "user_id",
+        "google_email",
+        name="uq_drive_connection_user_email",
+    ),
+)
+
 sessions = _table(
     "sessions",
     __import__("sqlalchemy").Column("id", String(128), primary_key=True),
@@ -264,15 +340,53 @@ email_jobs = _table(
 
 winners = _table(
     "winners",
-    __import__("sqlalchemy").Column("id", Integer, primary_key=True, autoincrement=True),
-    __import__("sqlalchemy").Column("event_id", Integer, nullable=False),
-    __import__("sqlalchemy").Column("guest_id", String(255)),
-    __import__("sqlalchemy").Column("name", String(255)),
-    __import__("sqlalchemy").Column("prize", String(255)),
-    __import__("sqlalchemy").Column("prize_name", String(255)),
-    __import__("sqlalchemy").Column("prize_value", String(255)),
-    __import__("sqlalchemy").Column("prize_image", Text),
-    __import__("sqlalchemy").Column("created_at", DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)),
+    __import__("sqlalchemy").Column(
+        "id",
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    ),
+    __import__("sqlalchemy").Column(
+        "event_id",
+        Integer,
+        nullable=False,
+    ),
+    __import__("sqlalchemy").Column(
+        "guest_id",
+        String(255),
+        nullable=False,
+    ),
+    __import__("sqlalchemy").Column(
+        "name",
+        String(255),
+    ),
+    __import__("sqlalchemy").Column(
+        "prize",
+        String(255),
+    ),
+    __import__("sqlalchemy").Column(
+        "prize_name",
+        String(255),
+    ),
+    __import__("sqlalchemy").Column(
+        "prize_value",
+        String(255),
+    ),
+    __import__("sqlalchemy").Column(
+        "prize_image",
+        Text,
+    ),
+    __import__("sqlalchemy").Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    ),
+    UniqueConstraint(
+        "event_id",
+        "guest_id",
+        name="uq_winners_event_guest",
+    ),
 )
 
 from sqlalchemy import Index
@@ -283,6 +397,21 @@ Index("idx_transactions_event_guest_time", transactions.c.event_id, transactions
 Index("idx_menu_items_stall", menu_items.c.stall_id)
 Index("idx_email_jobs_queue", email_jobs.c.status, email_jobs.c.available_at, email_jobs.c.id)
 Index("idx_winners_event_time", winners.c.event_id, winners.c.created_at)
+Index(
+    "idx_drive_connections_user",
+    google_drive_connections.c.user_id,
+)
+
+Index(
+    "idx_drive_connections_active",
+    google_drive_connections.c.is_active,
+)
+
+Index(
+    "idx_drive_connections_primary",
+    google_drive_connections.c.user_id,
+    google_drive_connections.c.is_primary,
+)
 
 TABLES = {t.name: t for t in metadata.sorted_tables}
 

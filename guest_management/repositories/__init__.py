@@ -9,6 +9,11 @@ from .stall_repository import StallRepository
 from .transaction_repository import TransactionRepository
 from .scanner_repository import ScannerRepository
 from .email_job_repository import EmailJobRepository
+from .checkin_repository import CheckinRepository
+from .winner_repository import WinnerRepository
+from .google_drive_connection_repository import (
+    GoogleDriveConnectionRepository,
+)
 
 __all__ = [
     "BaseRepository",
@@ -19,4 +24,7 @@ __all__ = [
     "TransactionRepository",
     "ScannerRepository",
     "EmailJobRepository",
+    "CheckinRepository",
+    "WinnerRepository",
+    "GoogleDriveConnectionRepository",
 ]

@@ -183,6 +183,41 @@ class EventRepository(BaseRepository):
             else None
         )
 
+    def get_owner_user_id(
+            self,
+            event_id: int,
+    ) -> Optional[str]:
+        """
+        Return the user_id of the owner of an event.
+
+        Internal use only.
+
+        This is intentionally separate from get_by_id_public()
+        because user_id is ownership/authentication information
+        and should not be included in public event payloads.
+        """
+
+        if not event_id:
+            raise ValueError("event_id is required")
+
+        response = (
+            self.db
+            .table("events")
+            .select("user_id")
+            .eq("id", int(event_id))
+            .limit(1)
+            .execute()
+        )
+
+        if not response.data:
+            return None
+
+        user_id = str(
+            response.data[0].get("user_id") or ""
+        ).strip()
+
+        return user_id or None
+
     # ==================================================================
     # CREATE
     # ==================================================================

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import html
 import logging
-import os
 import re
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -42,20 +41,6 @@ class EmailService:
         if not EMAIL_RE.match(address):
             raise ValidationError("Invalid email address")
         return address
-
-    @staticmethod
-    def build_guest_qr_url(event_id: int | str, guest_id: str | int) -> str:
-        base_url = (
-            os.getenv("APP_URL", "http://localhost:3000")
-            or "http://localhost:3000"
-        ).strip().rstrip("/")
-
-        if base_url.startswith("https://http://"):
-            base_url = base_url.replace("https://http://", "https://", 1)
-        elif base_url.startswith("http://https://"):
-            base_url = base_url.replace("http://https://", "https://", 1)
-
-        return f"{base_url}/guest?event_id={int(event_id)}&guest_id={str(guest_id)}"
 
     @staticmethod
     def _format_event_date(value: Any) -> str:
@@ -83,28 +68,43 @@ class EmailService:
 
     @staticmethod
     def _logo_html(event: Dict[str, Any]) -> str:
-        """Build a safe company-logo block.
-
-        A logo can be a public HTTPS URL or a data URI. A local/relative
-        path is intentionally not emitted because recipients cannot access
-        the developer's localhost filesystem.
-        """
-        logo = str(event.get("logo") or "").strip()
-        if not logo:
-            return ""
-
-        if logo.startswith("data:image/"):
-            src = logo
-        elif logo.startswith("https://") or logo.startswith("http://"):
-            src = logo
-        else:
+        """Build the inline company-logo block."""
+        if not str(event.get("logo_drive_file_id") or "").strip():
             return ""
 
         return (
-            '<p style="margin:0 0 18px 0;">'
-            f'<img src="{html.escape(src, quote=True)}" '
-            'alt="Company logo" style="max-width:220px;max-height:90px;object-fit:contain;">'
-            '</p>'
+            '<div style="text-align:center;margin:0 0 18px 0;">'
+            '<img src="cid:event-logo" alt="Company logo" '
+            'style="display:inline-block;max-width:220px;max-height:90px;'
+            'width:auto;height:auto;object-fit:contain;">'
+            '</div>'
+        )
+
+    @staticmethod
+    def _invitation_html(event: Dict[str, Any]) -> str:
+        """Build an inline invitation image block."""
+        file_id = str(
+            event.get("invitation_drive_file_id") or ""
+        ).strip()
+
+        mime_type = str(
+            event.get("invitation_mime_type") or ""
+        ).strip().lower()
+
+        if not file_id or not mime_type.startswith("image/"):
+            return ""
+
+        return (
+            '<div style="margin:26px 0;text-align:center;">'
+            '<div style="font-size:11px;text-transform:uppercase;'
+            'letter-spacing:1.6px;color:#999;margin-bottom:10px;">'
+            'Event Invitation'
+            '</div>'
+            '<img src="cid:event-invitation" '
+            'alt="Event invitation" '
+            'style="display:inline-block;max-width:100%;height:auto;'
+            'border-radius:14px;border:1px solid #e8e8e8;">'
+            '</div>'
         )
 
     def build_guest_invitation_job(
@@ -130,37 +130,213 @@ class EmailService:
         subject = f"Invitation: {event_name}"
 
         logo_html = self._logo_html(event)
-        company_line = f"<p><strong>{company}</strong></p>" if company else ""
+        invitation_html = self._invitation_html(event)
+
+        company_line = (
+            f'<div style="font-size:11px;letter-spacing:1.8px;'
+            f'text-transform:uppercase;color:#888;margin-bottom:10px;">'
+            f'{company}</div>'
+            if company
+            else ""
+        )
 
         html_content = f"""
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width,initial-scale=1.0">
     <title>{subject}</title>
 </head>
-<body style="font-family:Arial,sans-serif;line-height:1.5;color:#222;">
-    {logo_html}
-    {company_line}
 
-    <h1>Hello {name}!</h1>
+<body style="
+    margin:0;
+    padding:0;
+    background:#f4f4f2;
+    font-family:Arial,Helvetica,sans-serif;
+    color:#252525;
+">
 
-    <p>You are invited to <strong>{event_name}</strong>.</p>
+<div style="padding:28px 10px;">
 
-    <p>
-        <strong>Date:</strong> {date}<br>
-        <strong>Time:</strong> {time}<br>
-        <strong>Venue:</strong> {venue}<br>
-        <strong>Table:</strong> {table}
-    </p>
+<div style="
+    max-width:620px;
+    margin:0 auto;
+    background:#ffffff;
+    border-radius:18px;
+    overflow:hidden;
+    border:1px solid #e8e8e6;
+">
 
-    <p>Please present your event QR code at the entrance.</p>
+    <!-- HEADER -->
 
-    <p>
-        <img src="cid:guest-qr" alt="Event QR Code" width="220">
-    </p>
+    <div style="
+        padding:34px 28px 16px;
+        text-align:center;
+    ">
 
-    <p>We look forward to seeing you.</p>
+        {logo_html}
+
+        {company_line}
+
+        <div style="
+            font-size:29px;
+            line-height:1.2;
+            font-weight:700;
+            margin:4px 0 8px;
+        ">
+            {event_name}
+        </div>
+
+        <div style="
+            font-size:14px;
+            color:#888;
+        ">
+            You are warmly invited
+        </div>
+
+    </div>
+
+
+    <!-- CONTENT -->
+
+    <div style="padding:10px 28px 34px;">
+
+        <p style="
+            font-size:18px;
+            margin:8px 0 18px;
+        ">
+            Hello <strong>{name}</strong>,
+        </p>
+
+        <p style="
+            font-size:15px;
+            line-height:1.7;
+            color:#555;
+            margin:0 0 24px;
+        ">
+            We are delighted to have you join us.
+            Please find your personal event details below.
+        </p>
+
+
+        <!-- EVENT DETAILS -->
+
+        <div style="
+            background:#faf8f3;
+            border:1px solid #eee6d8;
+            border-radius:14px;
+            padding:19px 20px;
+            margin:0 0 24px;
+        ">
+
+            <div style="
+                font-size:11px;
+                text-transform:uppercase;
+                letter-spacing:1.4px;
+                color:#999;
+                margin-bottom:11px;
+            ">
+                Event Details
+            </div>
+
+            <div style="
+                font-size:15px;
+                line-height:1.9;
+            ">
+                <strong>Date</strong>&nbsp;&nbsp;{date}<br>
+                <strong>Time</strong>&nbsp;&nbsp;{time}<br>
+                <strong>Venue</strong>&nbsp;&nbsp;{venue}<br>
+                <strong>Table</strong>&nbsp;&nbsp;{table}
+            </div>
+
+        </div>
+
+
+        <!-- EVENT INVITATION -->
+
+        {invitation_html}
+
+
+        <!-- PERSONAL QR -->
+
+        <div style="
+            text-align:center;
+            padding:8px 0 2px;
+        ">
+
+            <div style="
+                font-size:13px;
+                color:#777;
+                margin-bottom:12px;
+            ">
+                Your personal entry QR code
+            </div>
+
+            <div style="
+                display:inline-block;
+                background:#fff;
+                padding:14px;
+                border:1px solid #e8e8e8;
+                border-radius:14px;
+            ">
+
+                <img
+                    src="cid:guest-qr"
+                    alt="Event QR Code"
+                    width="220"
+                    style="
+                        display:block;
+                        width:220px;
+                        height:220px;
+                    "
+                >
+
+            </div>
+
+            <div style="
+                font-size:12px;
+                color:#999;
+                margin-top:10px;
+            ">
+                Please present this QR code at the entrance.
+            </div>
+
+        </div>
+
+
+        <p style="
+            font-size:15px;
+            line-height:1.7;
+            color:#555;
+            text-align:center;
+            margin:28px 0 4px;
+        ">
+            We look forward to seeing you.
+        </p>
+
+    </div>
+
+
+    <!-- FOOTER -->
+
+    <div style="
+        padding:17px 24px;
+        background:#fafafa;
+        border-top:1px solid #eee;
+        text-align:center;
+        font-size:11px;
+        color:#999;
+    ">
+        This invitation was sent by EventLah.
+        Please keep this email for event entry.
+    </div>
+
+</div>
+
+</div>
+
 </body>
 </html>
 """.strip()

@@ -17,7 +17,7 @@ from PIL import Image
 
 from guest_management.database_client import get_db
 import logging
-
+from guest_management.services.checkin_service import CheckinService
 logger = logging.getLogger(__name__)
 
 
@@ -534,7 +534,11 @@ class GuestState(rx.State):
                 yield rx.toast.error("Guest not found")
                 return
 
-            result = repo.check_in(int(self.current_event_id), guest["guest_id"], "MANUAL")
+            result = CheckinService().check_in(
+                int(self.current_event_id),
+                guest["guest_id"],
+                "MANUAL",
+            )
             self.checkin_guest_name = str(result.get("guest_name") or guest.get("name") or "Guest")
             self.checkin_table_number = str(result.get("table_number") or guest.get("table_number") or "TBD")
             self.checkin_team_name = str(result.get("team_name") or guest.get("team_name") or "")
@@ -769,8 +773,8 @@ class GuestState(rx.State):
             drive_error = None
 
             try:
-                drive_service = (
-                    GoogleDriveAssetService()
+                drive_service = GoogleDriveAssetService(
+                    user_id=auth.user_id
                 )
 
                 # ----------------------------------------------------------
@@ -805,14 +809,14 @@ class GuestState(rx.State):
 
                 drive_asset = (
                     drive_service.upload_guest_list(
-                        data=original_content,
+                        content=original_content,
                         filename=original_filename,
                         mime_type=(
                             self._detect_upload_mime_type(
                                 original_filename
                             )
                         ),
-                        event_folder_id=event_folder_id,
+                        folder_id=event_folder_id,
                     )
                 )
 
@@ -830,14 +834,6 @@ class GuestState(rx.State):
                     )
                 )
 
-                if not updated_event:
-                    logger.warning(
-                        "Guest list uploaded to Drive but "
-                        "event metadata could not be updated. "
-                        "event_id=%s file_id=%s",
-                        event_id,
-                        drive_asset.file_id,
-                    )
                 if not updated_event:
                     logger.warning(
                         "Guest list uploaded to Drive but "

@@ -194,42 +194,99 @@ def _guest_table() -> rx.Component:
                             ),
                             rx.table.cell(
                                 rx.hstack(
-                                    rx.cond(
-                                        guest.get("email"),
-                                        rx.tooltip(
-                                            rx.button(
+                                    # Individual guest email action.
+                                    # Guest table rows use display-field names in some
+                                    # dashboard paths ("Email"/"ID"), while other paths
+                                    # use database names ("email"/"guest_id"). Do NOT
+                                    # hide the button based on only one spelling.
+                                    # Individual guest email action.
+                                    rx.button(
+                                        rx.hstack(
+                                            rx.cond(
+                                                EmailState.sending_email_guest_id
+                                                == str(
+                                                    guest.get(
+                                                        "ID",
+                                                        guest.get(
+                                                            "Id",
+                                                            guest.get(
+                                                                "id",
+                                                                guest.get(
+                                                                    "guest_id",
+                                                                    "",
+                                                                ),
+                                                            ),
+                                                        ),
+                                                    )
+                                                ),
+                                                rx.spinner(size="1"),
+                                                rx.icon(
+                                                    tag="mail",
+                                                    size=13,
+                                                ),
+                                            ),
+                                            rx.text(
                                                 rx.cond(
-                                                    EmailState.sending_email_guest_id == str(guest.get("ID", guest.get("Id", guest.get("guest_id", "")))),
-                                                    rx.spinner(size="1"),
-                                                    rx.icon(
-                                                        tag="mail",
-                                                        size=14,
-                                                        color=rx.cond(guest.get("email_sent", False), "green", GOLD),
-                                                        style={"width": "clamp(12px, 1.5vw, 16px)", "height": "clamp(12px, 1.5vw, 16px)"},
+                                                    EmailState.sending_email_guest_id
+                                                    == str(
+                                                        guest.get(
+                                                            "ID",
+                                                            guest.get(
+                                                                "Id",
+                                                                guest.get(
+                                                                    "id",
+                                                                    guest.get(
+                                                                        "guest_id",
+                                                                        "",
+                                                                    ),
+                                                                ),
+                                                            ),
+                                                        )
+                                                    ),
+                                                    "Sending…",
+                                                    rx.cond(
+                                                        guest.get("email_sent", False),
+                                                        "Resend Email",
+                                                        "Send Email",
                                                     ),
                                                 ),
-                                                on_click=lambda: EmailState.open_email_dialog(guest),
                                                 size="1",
-                                                variant="ghost",
-                                                is_disabled=EmailState.sending_email_guest_id == str(guest.get("ID", guest.get("Id", guest.get("id", "")))),
-                                                _hover={"bg": f"{GOLD}33"},
                                             ),
-                                            content=rx.cond(
-                                                EmailState.sending_email_guest_id == str(guest.get("ID", guest.get("Id", guest.get("id", "")))),
-                                                "Sending…",
-                                                rx.cond(guest.get("email_sent", False), "Resend email", "Send email"),
-                                            ),
+                                            spacing="1",
+                                            align="center",
                                         ),
-                                        rx.box(),
+                                        on_click=lambda: EmailState.open_email_dialog(guest),
+                                        size="1",
+                                        variant="outline",
+                                        border_color=rx.cond(
+                                            guest.get("email_sent", False),
+                                            "green",
+                                            GOLD,
+                                        ),
+                                        color=rx.cond(
+                                            guest.get("email_sent", False),
+                                            "green",
+                                            GOLD,
+                                        ),
                                     ),
-                                    rx.tooltip(
-                                        rx.button(
-                                            rx.icon(tag="history", size=12),
-                                            on_click=lambda: VoucherState.show_guest_history(guest),
-                                            variant="ghost",
-                                            _hover={"bg": f"{GOLD}33"},
+                                    rx.cond(
+                                        EventState.show_food_vouchers,
+                                        rx.tooltip(
+                                            rx.button(
+                                                rx.icon(
+                                                    tag="history",
+                                                    size=12,
+                                                ),
+                                                on_click=lambda: VoucherState.show_guest_history(
+                                                    guest
+                                                ),
+                                                variant="ghost",
+                                                _hover={
+                                                    "bg": f"{GOLD}33"
+                                                },
+                                            ),
+                                            content="View purchase history",
                                         ),
-                                        content="View purchase history",
                                     ),
                                     # Voucher button - only for Sports Day events with amount > 0
                                     rx.cond(
@@ -237,7 +294,8 @@ def _guest_table() -> rx.Component:
                                         rx.tooltip(
                                             rx.button(
                                                 rx.icon(tag="store", size=14, color=GOLD),
-                                                on_click=lambda: rx.redirect(f"/voucher-manager?guest_id={guest.get('ID', guest.get('guest_id', ''))}"),
+                                                on_click=lambda: rx.redirect(
+                                                    f"/voucher-manager?guest_id={guest.get('ID', guest.get('guest_id', ''))}"),
                                                 size="1",
                                                 variant="ghost",
                                                 _hover={"bg": f"{GOLD}33"},
@@ -252,7 +310,8 @@ def _guest_table() -> rx.Component:
                                                 tag="user_check",
                                                 size=14,
                                                 color=rx.cond(guest.get("Status") == "Present", "green", "red"),
-                                                style={"width": "clamp(12px, 1.5vw, 16px)", "height": "clamp(12px, 1.5vw, 16px)"},
+                                                style={"width": "clamp(12px, 1.5vw, 16px)",
+                                                       "height": "clamp(12px, 1.5vw, 16px)"},
                                             ),
                                             on_click=lambda: ScannerState.handle_scan(
                                                 str(guest.get("ID", guest.get("Id", guest.get("id", ""))))
@@ -274,6 +333,8 @@ def _guest_table() -> rx.Component:
                                     ),
                                     spacing="1",
                                     align="center",
+                                    min_width="150px",
+                                    wrap="wrap",
                                 ),
                                 padding="0.2em 0.5em",
                                 style={
@@ -334,6 +395,7 @@ def _guest_table() -> rx.Component:
         ),
     )
 
+
 def _no_event_selected() -> rx.Component:
     """Display when no event is selected."""
     return rx.center(
@@ -392,15 +454,15 @@ def _dashboard_content() -> rx.Component:
             rx.vstack(
                 rx.hstack(
                     rx.heading(
-                        EventState.current_event.get("name", "Event"),
+                        State.current_event.get("name", "Event"),
                         font_size=["0.8em", "0.9em", "1em", "1.2em"],
                         color=GOLD,
                         weight="bold",
                     ),
                     rx.badge(
                         rx.hstack(
-                            rx.text(EventState.event_config_icon),
-                            rx.text(EventState.event_config_name),
+                            rx.text(State.event_config_icon),
+                            rx.text(State.event_config_name),
                             spacing="1",
                         ),
                         color_scheme="gold",
@@ -412,19 +474,19 @@ def _dashboard_content() -> rx.Component:
                 rx.hstack(
                     rx.hstack(
                         rx.icon(tag="calendar", size=10, color=GOLD),
-                        rx.text(EventState.current_event.get("date", ""), color=LIGHT_GRAY,
+                        rx.text(State.current_event.get("date", ""), color=LIGHT_GRAY,
                                 font_size=["0.35em", "0.45em", "0.55em", "0.7em"]),
                         spacing="1",
                     ),
                     rx.hstack(
                         rx.icon(tag="clock", size=10, color=GOLD),
-                        rx.text(EventState.current_event.get("time", ""), color=LIGHT_GRAY,
+                        rx.text(State.current_event.get("time", ""), color=LIGHT_GRAY,
                                 font_size=["0.35em", "0.45em", "0.55em", "0.7em"]),
                         spacing="1",
                     ),
                     rx.hstack(
                         rx.icon(tag="map-pin", size=10, color=GOLD),
-                        rx.text(EventState.current_event.get("venue", ""), color=LIGHT_GRAY,
+                        rx.text(State.current_event.get("venue", ""), color=LIGHT_GRAY,
                                 font_size=["0.35em", "0.45em", "0.55em", "0.7em"]),
                         spacing="1",
                     ),

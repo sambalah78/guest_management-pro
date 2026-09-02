@@ -8,6 +8,7 @@ import base64
 import os
 
 from guest_management.core.config import settings
+from guest_management.utils.constants import EVENT_TYPES
 from guest_management.database_client import get_db
 import logging
 
@@ -44,63 +45,7 @@ class EventState(rx.State):
     user_id: str = ""
     is_authenticated: bool = False
 
-    # Event type configuration
-    EVENT_TYPES = {
-        "company_dinner": {
-            "name": "Company Dinner",
-            "icon": "🏢",
-            "features": {
-                "qr_checkin": True,
-                "email_invitations": True,
-                "table_assignment": True,
-                "food_vouchers": False,
-                "multiple_stalls": False,
-                "lucky_draw": True,
-                "team_management": False,
-                "score_tracking": False,
-                "parent_guardian_info": False,
-                "dietary_restrictions": True,
-                "plus_one_management": False,
-            },
-            "fields": ["name", "email", "id", "table", "dietary_restrictions", "employee_id"]
-        },
-        "wedding_dinner": {
-            "name": "Wedding Dinner",
-            "icon": "💒",
-            "features": {
-                "qr_checkin": True,
-                "email_invitations": True,
-                "table_assignment": True,
-                "food_vouchers": False,
-                "multiple_stalls": False,
-                "lucky_draw": False,
-                "team_management": False,
-                "score_tracking": False,
-                "parent_guardian_info": True,
-                "dietary_restrictions": True,
-                "plus_one_management": True,
-            },
-            "fields": ["name", "email", "id", "table", "dietary_restrictions", "parent_name", "parent_phone", "plus_one_name"]
-        },
-        "sports_day": {
-            "name": "Sports Day",
-            "icon": "⚽",
-            "features": {
-                "qr_checkin": True,
-                "email_invitations": True,
-                "table_assignment": True,
-                "food_vouchers": True,
-                "multiple_stalls": True,
-                "lucky_draw": True,
-                "team_management": False,
-                "score_tracking": False,
-                "parent_guardian_info": True,
-                "dietary_restrictions": False,
-                "plus_one_management": False,
-            },
-            "fields": ["name", "email", "id", "table", "amount", "parent_name", "parent_phone", "jersey_size"]
-        }
-    }
+    # Event type configuration is centralized in utils.constants.EVENT_TYPES.
 
     # --- Computed Properties ---
 
@@ -124,74 +69,92 @@ class EventState(rx.State):
 
     @rx.var
     def formatted_event_type(self) -> str:
-        """Get formatted event type name."""
-        display_names = {
-            "company_dinner": "Company Dinner",
-            "wedding_dinner": "Wedding Dinner",
-            "sports_day": "Sports Day"
-        }
-        event_type = self.event_type if self.event_type else "company_dinner"
-        return display_names.get(event_type, "Company Dinner")
+        """Get the display name for the selected event type."""
+        event_type = (
+            self.current_event.get("event_type")
+            if self.current_event
+            else self.event_type
+        ) or "company_dinner"
+
+        config = EVENT_TYPES.get(
+            event_type,
+            EVENT_TYPES["company_dinner"],
+        )
+        return config["name"]
 
     @rx.var
     def event_type_icon(self) -> str:
-        """Get event type icon."""
-        icons = {
-            "company_dinner": "🏢",
-            "wedding_dinner": "💒",
-            "sports_day": "⚽"
-        }
-        event_type = self.event_type if self.event_type else "company_dinner"
-        return icons.get(event_type, "🎉")
+        """Get the icon for the selected event type."""
+        event_type = (
+            self.current_event.get("event_type")
+            if self.current_event
+            else self.event_type
+        ) or "company_dinner"
+
+        config = EVENT_TYPES.get(
+            event_type,
+            EVENT_TYPES["company_dinner"],
+        )
+        return config["icon"]
 
     @rx.var
     def event_config_name(self) -> str:
         """Get event type name."""
-        if self.current_event:
-            event_type = self.current_event.get("event_type", "company_dinner")
-        else:
-            event_type = self.event_type if self.event_type else "company_dinner"
-        config = self.EVENT_TYPES.get(event_type, self.EVENT_TYPES["company_dinner"])
+        event_type = (
+            self.current_event.get("event_type")
+            if self.current_event
+            else self.event_type
+        ) or "company_dinner"
+
+        config = EVENT_TYPES.get(
+            event_type,
+            EVENT_TYPES["company_dinner"],
+        )
         return config["name"]
 
     @rx.var
     def event_config_icon(self) -> str:
         """Get event type icon."""
-        if self.current_event:
-            event_type = self.current_event.get("event_type", "company_dinner")
-        else:
-            event_type = self.event_type if self.event_type else "company_dinner"
-        config = self.EVENT_TYPES.get(event_type, self.EVENT_TYPES["company_dinner"])
+        event_type = (
+            self.current_event.get("event_type")
+            if self.current_event
+            else self.event_type
+        ) or "company_dinner"
+
+        config = EVENT_TYPES.get(
+            event_type,
+            EVENT_TYPES["company_dinner"],
+        )
         return config["icon"]
 
     @rx.var
     def show_lucky_draw(self) -> bool:
         """Check if lucky draw should be shown."""
-        config = self.EVENT_TYPES.get(self.event_type, self.EVENT_TYPES["company_dinner"])
+        config = EVENT_TYPES.get(self.event_type, EVENT_TYPES["company_dinner"])
         return config["features"].get("lucky_draw", False)
 
     @rx.var
     def show_food_vouchers(self) -> bool:
         """Check if food vouchers should be shown."""
-        config = self.EVENT_TYPES.get(self.event_type, self.EVENT_TYPES["company_dinner"])
+        config = EVENT_TYPES.get(self.event_type, EVENT_TYPES["company_dinner"])
         return config["features"].get("food_vouchers", False)
 
     @rx.var
     def show_plus_one(self) -> bool:
         """Check if plus-one management should be shown."""
-        config = self.EVENT_TYPES.get(self.event_type, self.EVENT_TYPES["company_dinner"])
+        config = EVENT_TYPES.get(self.event_type, EVENT_TYPES["company_dinner"])
         return config["features"].get("plus_one_management", False)
 
     @rx.var
     def show_parent_guardian(self) -> bool:
         """Check if parent/guardian info should be shown."""
-        config = self.EVENT_TYPES.get(self.event_type, self.EVENT_TYPES["company_dinner"])
+        config = EVENT_TYPES.get(self.event_type, EVENT_TYPES["company_dinner"])
         return config["features"].get("parent_guardian_info", False)
 
     @rx.var
     def show_dietary_restrictions(self) -> bool:
         """Check if dietary restrictions should be shown."""
-        config = self.EVENT_TYPES.get(self.event_type, self.EVENT_TYPES["company_dinner"])
+        config = EVENT_TYPES.get(self.event_type, EVENT_TYPES["company_dinner"])
         return config["features"].get("dietary_restrictions", False)
 
     # --- Actions ---
@@ -242,6 +205,9 @@ class EventState(rx.State):
         try:
             from guest_management.state.auth_state import AuthState
             from guest_management.services.event_service import EventService
+            from guest_management.services.google_drive_asset_service import (
+                GoogleDriveAssetService,
+            )
 
             auth = await self.get_state(AuthState)
 
@@ -267,12 +233,20 @@ class EventState(rx.State):
                     self.wedding_invitation_card
                 )
 
+            # Create a Google Drive service using the authenticated
+            # user's Google OAuth context.
+            drive_service = GoogleDriveAssetService(
+                user_id=auth.user_id
+            )
+
             # EventService handles:
             # 1. DB event creation
             # 2. Google Drive event folder creation
             # 3. Drive folder ID persistence
             # 4. Logo/invitation upload
-            new_event = EventService().create_event(
+            new_event = EventService(
+                drive_service=drive_service
+            ).create_event(
                 event_data,
                 auth.user_id,
             )

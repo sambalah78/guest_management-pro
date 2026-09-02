@@ -113,7 +113,7 @@ app.add_page(stall_menu.stall_menu, route="/stall/menu", on_load=[VoucherState.s
 app.add_page(
     lucky_draw.lucky_draw_page,
     route="/lucky-draw",
-    on_load=[AuthState.check_auth, GuestState.load_guests, LuckyDrawState.load_lucky_draw_eligible_guests, LuckyDrawState.load_winners],
+    on_load=[AuthState.check_auth, GuestState.load_guests, GuestState.load_lucky_draw_eligible_guests, GuestState.load_winners],
     title="Lucky Draw"
 )
 

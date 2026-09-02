@@ -46,15 +46,16 @@ from guest_management.services.email_service import EmailService
 logger = logging.getLogger("eventlah.email_worker")
 
 from guest_management.repositories.event_repository import EventRepository
+from guest_management.repositories.guest_repository import GuestRepository
 from guest_management.services.google_drive_asset_service import (
     GoogleDriveAssetService,
 )
 class EmailWorker:
 
     def __init__(
-        self,
-        batch_size: int = 10,
-        poll_seconds: int = 5,
+            self,
+            batch_size: int = 10,
+            poll_seconds: int = 5,
     ):
         self.batch_size = max(
             1,
@@ -68,26 +69,26 @@ class EmailWorker:
 
         self.repo = EmailJobRepository()
         self.event_repo = EventRepository()
-        self.drive_service = GoogleDriveAssetService()
+        self.guest_repo = GuestRepository()
 
         api_key = (
-            getattr(
-                settings,
-                "sendgrid_api_key",
-                None,
-            )
-            or os.getenv("SENDGRID_API_KEY")
-            or ""
+                getattr(
+                    settings,
+                    "sendgrid_api_key",
+                    None,
+                )
+                or os.getenv("SENDGRID_API_KEY")
+                or ""
         ).strip()
 
         sender = (
-            getattr(
-                settings,
-                "sender_email",
-                None,
-            )
-            or os.getenv("SENDER_EMAIL")
-            or ""
+                getattr(
+                    settings,
+                    "sender_email",
+                    None,
+                )
+                or os.getenv("SENDER_EMAIL")
+                or ""
         ).strip()
 
         if not api_key:
@@ -113,30 +114,57 @@ class EmailWorker:
             self.batch_size,
         )
 
-
     # ================================================================
     # QR GENERATION
     # ================================================================
 
-    @staticmethod
     def build_qr_png(
+        self,
         event_id: int,
         guest_id: str,
     ) -> bytes:
         """
-        Generate the guest's QR code.
+        Generate the email QR from the authoritative stored
+        guest QR URL.
 
-        The URL must be the same URL used by EventLah's
-        guest/check-in flow.
+        The client's supplied guest ID is preserved.
         """
 
-        qr_url = EmailService.build_guest_qr_url(
-            event_id=int(event_id),
-            guest_id=str(guest_id),
+        response = (
+            self.guest_repo.db
+            .table("guests")
+            .select("guest_id,qr_url,qr_code")
+            .eq("event_id", int(event_id))
+            .eq("guest_id", str(guest_id))
+            .limit(1)
+            .execute()
         )
 
+        guest = (
+            response.data[0]
+            if response.data
+            else None
+        )
+
+        if not guest:
+            raise RuntimeError(
+                f"Guest {guest_id} not found "
+                f"for event {event_id}"
+            )
+
+        qr_url = str(
+            guest.get("qr_url")
+            or guest.get("qr_code")
+            or ""
+        ).strip()
+
+        if not qr_url:
+            raise RuntimeError(
+                f"Guest {guest_id} has no stored QR URL"
+            )
+
         logger.debug(
-            "QR URL event=%s guest=%s: %s",
+            "Using stored QR URL event=%s guest=%s: %s",
             event_id,
             guest_id,
             qr_url,
@@ -167,78 +195,91 @@ class EmailWorker:
 
         return buffer.getvalue()
 
-    def _add_wedding_invitation(
+    def _get_drive_service_for_event(
             self,
-            message: Mail,
             event_id: int,
-    ) -> None:
-        """Attach the wedding invitation stored in Google Drive."""
+    ) -> GoogleDriveAssetService:
+        """
+        Create a Google Drive service authenticated as the
+        owner of the specified EventLah event.
+        """
 
-        event = self.event_repo.get_by_id_public(
-            int(event_id)
+        event_id = int(event_id)
+
+        user_id = self.event_repo.get_owner_user_id(
+            event_id
         )
 
-        if not event:
-            logger.warning(
-                "Event %s not found while attaching wedding invitation",
-                event_id,
+        if not user_id:
+            raise RuntimeError(
+                f"Event {event_id} does not have a valid owner."
             )
-            return
 
-        event_type = str(
-            event.get("event_type") or ""
-        ).strip().lower()
+        logger.debug(
+            "Creating Google Drive service for "
+            "event=%s owner=%s",
+            event_id,
+            user_id,
+        )
 
-        if event_type != "wedding_dinner":
-            return
+        return GoogleDriveAssetService(
+            user_id=user_id
+        )
 
-        invitation_file_id = str(
-            event.get("invitation_drive_file_id") or ""
+    def _add_drive_asset(
+        self,
+        message: Mail,
+        event: Dict[str, Any],
+        *,
+        file_id_key: str,
+        filename_key: str,
+        mime_key: str,
+        content_id: str,
+        inline: bool,
+    ) -> bool:
+        """Download an event asset from Google Drive."""
+
+        file_id = str(
+            event.get(file_id_key) or ""
         ).strip()
 
-        if not invitation_file_id:
-            logger.info(
-                "Wedding event %s has no invitation asset",
-                event_id,
-            )
-            return
+        if not file_id:
+            return False
 
         try:
-            invitation_bytes = (
-                self.drive_service.download_bytes(
-                    invitation_file_id
+            drive_service = (
+                self._get_drive_service_for_event(
+                    int(event["id"])
                 )
             )
 
-            if not invitation_bytes:
+            data = drive_service.download_bytes(
+                file_id
+            )
+
+            if not data:
                 logger.warning(
-                    "Wedding invitation asset is empty: "
+                    "Event asset is empty: "
                     "event=%s file=%s",
-                    event_id,
-                    invitation_file_id,
+                    event["id"],
+                    file_id,
                 )
-                return
+                return False
 
             filename = str(
-                event.get("invitation_filename")
-                or f"event_{event_id}_invitation.png"
+                event.get(filename_key)
+                or f"event_{event['id']}_asset"
             ).strip()
 
             mime_type = str(
-                event.get("invitation_mime_type")
+                event.get(mime_key)
                 or "application/octet-stream"
             ).strip()
-
-            invitation_base64 = (
-                base64.b64encode(
-                    invitation_bytes
-                ).decode("ascii")
-            )
 
             attachment = Attachment()
 
             attachment.file_content = FileContent(
-                invitation_base64
+                base64.b64encode(data).decode("ascii")
             )
 
             attachment.file_type = FileType(
@@ -249,29 +290,94 @@ class EmailWorker:
                 filename
             )
 
-            attachment.disposition = Disposition(
-                "attachment"
-            )
+            if inline:
+                attachment.disposition = (
+                    Disposition("inline")
+                )
+                attachment.content_id = (
+                    content_id
+                )
+            else:
+                attachment.disposition = (
+                    Disposition("attachment")
+                )
 
             message.add_attachment(
                 attachment
             )
 
             logger.info(
-                "Wedding invitation attached: "
-                "event=%s file=%s filename=%s",
-                event_id,
-                invitation_file_id,
+                "Event asset added: "
+                "event=%s file=%s filename=%s inline=%s",
+                event["id"],
+                file_id,
                 filename,
+                inline,
             )
+
+            return True
 
         except Exception:
             logger.exception(
-                "Failed to attach wedding invitation: "
+                "Failed to add event asset: "
                 "event=%s file=%s",
-                event_id,
-                invitation_file_id,
+                event.get("id"),
+                file_id,
             )
+            return False
+
+
+    def _add_event_branding(
+        self,
+        message: Mail,
+        event: Dict[str, Any],
+    ) -> tuple[bool, bool]:
+        """
+        Add the event logo and invitation from Google Drive.
+
+        Returns:
+            (logo_added, invitation_added)
+        """
+
+        logo_added = self._add_drive_asset(
+            message,
+            event,
+            file_id_key="logo_drive_file_id",
+            filename_key="logo_filename",
+            mime_key="logo_mime_type",
+            content_id="event-logo",
+            inline=True,
+        )
+
+        invitation_file_id = str(
+            event.get("invitation_drive_file_id")
+            or ""
+        ).strip()
+
+        invitation_mime = str(
+            event.get("invitation_mime_type")
+            or ""
+        ).strip().lower()
+
+        invitation_inline = bool(
+            invitation_file_id
+            and invitation_mime.startswith("image/")
+        )
+
+        invitation_added = self._add_drive_asset(
+            message,
+            event,
+            file_id_key="invitation_drive_file_id",
+            filename_key="invitation_filename",
+            mime_key="invitation_mime_type",
+            content_id="event-invitation",
+            inline=invitation_inline,
+        )
+
+        return (
+            logo_added,
+            invitation_added,
+        )
 
     # ================================================================
     # BUILD SENDGRID MESSAGE
@@ -309,9 +415,16 @@ class EmailWorker:
             or ""
         )
 
-        # ------------------------------------------------------------
-        # Build normal SendGrid message
-        # ------------------------------------------------------------
+        event = (
+            self.event_repo.get_by_id_public(
+                event_id
+            )
+        )
+
+        if not event:
+            raise RuntimeError(
+                f"Event {event_id} not found"
+            )
 
         message = Mail(
             from_email=self.sender,
@@ -319,9 +432,40 @@ class EmailWorker:
             subject=subject,
         )
 
-        # ------------------------------------------------------------
-        # Plain text
-        # ------------------------------------------------------------
+        logo_added, invitation_added = (
+            self._add_event_branding(
+                message,
+                event,
+            )
+        )
+
+        # If an asset was unavailable, remove its
+        # corresponding HTML block rather than leaving
+        # a broken CID image.
+
+        if not logo_added:
+            logo_html = EmailService._logo_html(
+                event
+            )
+
+            if logo_html:
+                html_content = html_content.replace(
+                    logo_html,
+                    "",
+                )
+
+        if not invitation_added:
+            invitation_html = (
+                EmailService._invitation_html(
+                    event
+                )
+            )
+
+            if invitation_html:
+                html_content = html_content.replace(
+                    invitation_html,
+                    "",
+                )
 
         if plain_text:
             message.add_content(
@@ -331,10 +475,6 @@ class EmailWorker:
                 )
             )
 
-        # ------------------------------------------------------------
-        # HTML
-        # ------------------------------------------------------------
-
         if html_content:
             message.add_content(
                 Content(
@@ -343,60 +483,43 @@ class EmailWorker:
                 )
             )
 
-        # ------------------------------------------------------------
-        # Generate QR
-        # ------------------------------------------------------------
+        # ----------------------------------------------------------
+        # Personal guest QR
+        # ----------------------------------------------------------
 
         qr_png = self.build_qr_png(
             event_id=event_id,
             guest_id=guest_id,
         )
 
-        qr_base64 = base64.b64encode(
-            qr_png
-        ).decode("ascii")
+        qr_attachment = Attachment()
 
-        # ------------------------------------------------------------
-        # Inline attachment
-        #
-        # This is what makes:
-        #
-        #     <img src="cid:guest-qr">
-        #
-        # work inside the email.
-        # ------------------------------------------------------------
-
-        attachment = Attachment()
-
-        attachment.file_content = FileContent(
-            qr_base64
+        qr_attachment.file_content = FileContent(
+            base64.b64encode(
+                qr_png
+            ).decode("ascii")
         )
 
-        attachment.file_type = FileType(
+        qr_attachment.file_type = FileType(
             "image/png"
         )
 
-        attachment.file_name = FileName(
+        qr_attachment.file_name = FileName(
             "eventlah-guest-qr.png"
         )
 
-        attachment.disposition = Disposition(
-            "inline"
+        qr_attachment.disposition = (
+            Disposition("inline")
         )
 
-        attachment.content_id = "guest-qr"
+        qr_attachment.content_id = (
+            "guest-qr"
+        )
 
         message.add_attachment(
-            attachment
+            qr_attachment
         )
-        # ------------------------------------------------------------
-        # Wedding invitation
-        # ------------------------------------------------------------
 
-        self._add_wedding_invitation(
-            message,
-            event_id,
-        )
         return message
 
     # ================================================================

@@ -44,7 +44,8 @@ EVENT_TYPES = {
             "dietary_restrictions": True,
             "plus_one_management": True,
         },
-        "fields": ["name", "email", "id", "table", "dietary_restrictions", "parent_name", "parent_phone", "plus_one_name"]
+        "fields": ["name", "email", "id", "table", "dietary_restrictions", "parent_name", "parent_phone",
+                   "plus_one_name"]
     },
     "sports_day": {
         "name": "Sports Day",
@@ -63,7 +64,29 @@ EVENT_TYPES = {
             "plus_one_management": False,
         },
         "fields": ["name", "email", "id", "table", "amount", "team_name", "parent_name", "parent_phone", "jersey_size"]
-    }
+    },
+    "lucky_draw": {
+        "name": "Lucky Draw",
+        "icon": "🎁",
+        "features": {
+            "qr_checkin": False,
+            "email_invitations": False,
+            "table_assignment": False,
+            "food_vouchers": False,
+            "multiple_stalls": False,
+            "lucky_draw": True,
+            "team_management": False,
+            "score_tracking": False,
+            "parent_guardian_info": False,
+            "dietary_restrictions": False,
+            "plus_one_management": False,
+        },
+        "fields": [
+            "name",
+            "email",
+            "id",
+        ],
+    },
 }
 
 # Public routes (no auth required)
