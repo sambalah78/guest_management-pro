@@ -3,7 +3,7 @@
 
 import reflex as rx
 
-from ..state import LuckyDrawState
+from ..state import State, UIState, LuckyDrawState
 from ..utils.constants import GOLD, BLACK, DARK_GRAY, LIGHT_GRAY
 from ..components import upload_dialog
 from ..components.lucky_draw_manager import lucky_draw_manager
@@ -80,17 +80,13 @@ def _section_header(icon, title, description):
 
 
 def _guest_list_card():
-    """Show the participant source used by this event's Lucky Draw."""
+    """Guest list summary and entry point to the normal guest manager."""
     return rx.card(
         rx.vstack(
             _section_header(
                 "users",
-                rx.cond(
-                    LuckyDrawState.lucky_draw_uses_attendance,
-                    "Event Guest List",
-                    "Participant List",
-                ),
-                LuckyDrawState.lucky_draw_source_label,
+                "Guest List",
+                "Manage the participants for this Lucky Draw event.",
             ),
             rx.divider(),
             rx.hstack(
@@ -102,11 +98,7 @@ def _guest_list_card():
                         weight="bold",
                     ),
                     rx.text(
-                        rx.cond(
-                            LuckyDrawState.lucky_draw_uses_attendance,
-                            "Checked-in guests eligible",
-                            "Participants eligible",
-                        ),
+                        "Eligible guests",
                         color=LIGHT_GRAY,
                         font_size="0.8rem",
                     ),
@@ -116,63 +108,23 @@ def _guest_list_card():
                 rx.spacer(),
                 rx.button(
                     rx.hstack(
-                        rx.icon(tag="refresh-cw", size=16),
-                        rx.text("Refresh"),
+                        rx.icon(tag="upload", size=16),
+                        rx.text("Import Guests"),
                         spacing="2",
                     ),
-                    on_click=LuckyDrawState.load_lucky_draw_eligible_guests,
-                    variant="outline",
-                    border_color=GOLD,
-                    color=GOLD,
+                    on_click=rx.redirect(
+                        f"/dashboard/{LuckyDrawState.current_event_id}"
+                    ),
+                    bg=GOLD,
+                    color=BLACK,
                     size="2",
+                    _hover={"transform": "translateY(-1px)"},
                 ),
             ),
-            rx.cond(
-                LuckyDrawState.lucky_draw_uses_attendance,
-                rx.vstack(
-                    rx.text(
-                        "The same guest list is used for invitation emails. On event day, only guests who successfully check in are included in the Lucky Draw pool.",
-                        color=LIGHT_GRAY,
-                        font_size="0.72rem",
-                    ),
-                    rx.button(
-                        rx.hstack(
-                            rx.icon(tag="upload", size=15),
-                            rx.text("Manage Guest List"),
-                            spacing="2",
-                        ),
-                        on_click=rx.redirect(
-                            f"/dashboard/{LuckyDrawState.current_event_id}"
-                        ),
-                        bg=GOLD,
-                        color=BLACK,
-                        size="2",
-                        width="100%",
-                    ),
-                    spacing="2",
-                    width="100%",
-                ),
-                rx.vstack(
-                    rx.text(
-                        "Upload the participant file supplied by the client. No check-in is required for a standalone Lucky Draw.",
-                        color=LIGHT_GRAY,
-                        font_size="0.72rem",
-                    ),
-                    rx.button(
-                        rx.hstack(
-                            rx.icon(tag="upload", size=15),
-                            rx.text("Import Participant File"),
-                            spacing="2",
-                        ),
-                        on_click=LuckyDrawState.open_participant_import,
-                        bg=GOLD,
-                        color=BLACK,
-                        size="2",
-                        width="100%",
-                    ),
-                    spacing="2",
-                    width="100%",
-                ),
+            rx.text(
+                "Guest lists can be uploaded and managed from the event dashboard.",
+                color="gray",
+                font_size="0.72rem",
             ),
             spacing="4",
             width="100%",
@@ -184,146 +136,6 @@ def _guest_list_card():
         width="100%",
     )
 
-def _pre_draw_winner_card():
-    """Pre-draw winner upload and status card."""
-    return rx.card(
-        rx.vstack(
-            _section_header(
-                "trophy",
-                "Pre-Draw Winners",
-                "Upload guests who have already won preliminary prizes before the event.",
-            ),
-
-            rx.divider(),
-
-            rx.hstack(
-                rx.vstack(
-                    rx.text(
-                        LuckyDrawState.pre_draw_winner_count,
-                        color=GOLD,
-                        font_size=["2rem", "2.4rem"],
-                        weight="bold",
-                    ),
-                    rx.text(
-                        "Pre-draw winners",
-                        color=LIGHT_GRAY,
-                        font_size="0.8rem",
-                    ),
-                    spacing="0",
-                    align="start",
-                ),
-
-                rx.spacer(),
-
-                rx.upload(
-                    rx.button(
-                        rx.hstack(
-                            rx.icon(
-                                tag="file-spreadsheet",
-                                size=16,
-                            ),
-                            rx.text("Upload Pre-Draw Winners"),
-                            spacing="2",
-                        ),
-                        bg=GOLD,
-                        color=BLACK,
-                        size="2",
-                    ),
-                    id="pre_draw_winner_excel_upload",
-                    multiple=False,
-                    accept={
-                        ".xlsx": (
-                            "application/vnd.openxmlformats-officedocument."
-                            "spreadsheetml.sheet"
-                        ),
-                        ".xls": "application/vnd.ms-excel",
-                        ".xlsm": (
-                            "application/vnd.ms-excel.sheet.macroEnabled.12"
-                        ),
-                    },
-                    max_files=1,
-                    on_drop=LuckyDrawState.set_pre_draw_winner_file,
-                ),
-            ),
-
-            rx.cond(
-                LuckyDrawState.pre_draw_winner_selected_file_name != "",
-                rx.hstack(
-                    rx.icon(
-                        tag="file-text",
-                        size=14,
-                        color=GOLD,
-                    ),
-
-                    rx.text(
-                        LuckyDrawState.pre_draw_winner_selected_file_name,
-                        color=GOLD,
-                        font_size="0.78rem",
-                        flex="1",
-                    ),
-
-                    rx.button(
-                        "Import Winners",
-                        on_click=(
-                            LuckyDrawState.process_pre_draw_winner_upload
-                        ),
-                        bg=GOLD,
-                        color=BLACK,
-                        size="1",
-                    ),
-
-                    rx.button(
-                        rx.icon(
-                            tag="x",
-                            size=13,
-                        ),
-                        on_click=(
-                            LuckyDrawState.clear_pre_draw_winner_file
-                        ),
-                        variant="outline",
-                        border_color=GOLD,
-                        color=GOLD,
-                        size="1",
-                    ),
-
-                    width="100%",
-                    align="center",
-                    spacing="2",
-                    background=f"{GOLD}15",
-                    border_radius="8px",
-                    padding="0.6em",
-                ),
-                rx.text(
-                    "No new pre-draw winner file selected.",
-                    color="gray",
-                    font_size="0.72rem",
-                ),
-            ),
-
-            rx.text(
-                "Required columns: Name, Guest ID. "
-                "Optional: Prize, Value, Image URL.",
-                color="gray",
-                font_size="0.72rem",
-            ),
-
-            rx.text(
-                "Guest IDs must already exist in the attending guest list. "
-                "Uploading a new file replaces the existing pre-draw winner list.",
-                color="gray",
-                font_size="0.72rem",
-            ),
-
-            spacing="4",
-            width="100%",
-        ),
-
-        background=DARK_GRAY,
-        border="1px solid rgba(212, 175, 55, 0.35)",
-        border_radius="14px",
-        padding=["1em", "1.25em"],
-        width="100%",
-    )
 
 def _prize_count():
     """Return the count for the currently selected prize input mode."""
@@ -621,11 +433,7 @@ def lucky_draw_page():
                                 font_size=["0.82rem", "0.9rem", "1rem"],
                             ),
                             rx.badge(
-                                rx.cond(
-                                    LuckyDrawState.lucky_draw_uses_attendance,
-                                    "ATTENDANCE LINKED",
-                                    "NO CHECK-IN",
-                                ),
+                                "LIVE",
                                 color_scheme="green",
                                 variant="soft",
                                 size="1",
@@ -658,12 +466,8 @@ def lucky_draw_page():
                 # Setup cards -------------------------------------------------
                 rx.grid(
                     _guest_list_card(),
-                    _pre_draw_winner_card(),
                     _prize_list_card(),
-                    columns=rx.breakpoints(
-                        initial="1fr",
-                        lg="repeat(2, minmax(0, 1fr))",
-                    ),
+                    columns=["1fr", "1fr"],
                     spacing="4",
                     width="100%",
                 ),
@@ -688,7 +492,7 @@ def lucky_draw_page():
                         "crown",
                         background="#E8F6EA",
                     ),
-                    columns="repeat(3, minmax(0, 1fr))",
+                    columns=["1fr", "1fr", "1fr"],
                     spacing="4",
                     width="100%",
                 ),
@@ -701,20 +505,11 @@ def lucky_draw_page():
                             size="5",
                             color="white",
                         ),
-                        rx.cond(
-                            LuckyDrawState.lucky_draw_uses_attendance,
-                            rx.text(
-                                "The display will use the latest checked-in attendance from this event. The invitation guest list remains the source of participant records.",
-                                color=LIGHT_GRAY,
-                                text_align="center",
-                                font_size="0.82rem",
-                            ),
-                            rx.text(
-                                "The display will use the complete client-supplied participant list. No event-day check-in is required.",
-                                color=LIGHT_GRAY,
-                                text_align="center",
-                                font_size="0.82rem",
-                            ),
+                        rx.text(
+                            "When setup is complete, open the dedicated display screen for the event audience.",
+                            color=LIGHT_GRAY,
+                            text_align="center",
+                            font_size="0.82rem",
                         ),
                         rx.button(
                             rx.hstack(

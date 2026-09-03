@@ -11,6 +11,7 @@ import asyncio
 
 import logging
 from ..services.winner_service import WinnerService
+from ..services.pre_draw_winner_service import PreDrawWinnerService
 from ..state.guest_state import GuestState
 from ..utils.constants import EVENT_TYPES
 from ..state.auth_state import AuthState
@@ -92,7 +93,23 @@ class LuckyDrawState(rx.State):
     lucky_draw_only_present: bool = True
     lucky_draw_excluded: str = ""
     lucky_draw_eligible_guests: List[Dict[str, Any]] = []
+    # -----------------------------------------------------------------------
+    # Pre-draw winners
+    # -----------------------------------------------------------------------
+    # These are winners selected before the live event.
+    # They are intentionally separate from winners_list.
+    pre_draw_winners: List[Dict[str, Any]] = []
 
+    # By default, a preliminary winner cannot win again in the live draw.
+    include_pre_draw_winners: bool = False
+
+    # Temporary upload buffer. The file is persisted immediately after
+    # validation and is not used as the source of truth.
+    pre_draw_winner_selected_file_name: str = ""
+    pre_draw_winner_filename: str = ""
+    _pre_draw_winner_file_content: bytes = b""
+    _pre_draw_winner_filename: str = ""
+    pre_draw_display_participants: List[Dict[str, Any]] = []
     # Draw state
     lucky_draw_spinning: bool = False
     lucky_draw_current_name: str = ""
@@ -115,11 +132,21 @@ class LuckyDrawState(rx.State):
     # UI states
     draw_finished: bool = False
     prize_list: List[Dict[str, Any]] = []
+
+    # Pre-draw presentation configuration.
+    # "same" means one browser presentation can be duplicated by an AV splitter.
+    # "different" means each physical display needs its own display client/feed;
+    # a normal AV splitter cannot produce independent slides.
+    predraw_display_mode: str = "same"
+    predraw_screen_count: int = 1
     prize_excel_filename: str = ""
     lucky_draw_spinner_open: bool = False
     lucky_draw_show_new_draw_dialog: bool = False
     show_clear_confirm: bool = False
-
+    predraw_page: int = 0
+    predraw_page_size: int = 30
+    predraw_rotation_interval_ms: int = 8000
+    predraw_rotation_seconds: int = 8
     # Prize file
     prize_selected_file_name: str = ""
     _prize_file_content: bytes = b""
@@ -133,6 +160,46 @@ class LuckyDrawState(rx.State):
     lucky_draw_redraw_count: int = 0
     lucky_draw_redraw_guest_id: str = ""
     lucky_draw_redraw_guest_name: str = ""
+
+    def advance_predraw_page(self):
+        """Advance the public pre-draw display to the next page."""
+        page_count = self.predraw_page_count
+
+        if page_count <= 1:
+            self.predraw_page = 0
+            return
+
+        self.predraw_page = (
+                                    self.predraw_page + 1
+                            ) % page_count
+
+    async def predraw_auto_rotate(self):
+        """Advance the public pre-draw display by one page."""
+        self.predraw_next_page()
+        yield
+
+    def advance_predraw_page(self):
+        """Advance the public pre-draw display to the next page."""
+        page_count = self.predraw_page_count
+
+        if page_count <= 1:
+            self.predraw_page = 0
+            return
+
+        self.predraw_page = (
+                                    self.predraw_page + 1
+                            ) % page_count
+
+    def clear_pre_draw_winner_file(self):
+        """Clear the staged preliminary-winner upload."""
+        self.pre_draw_winner_selected_file_name = ""
+        self.pre_draw_winner_filename = ""
+        self._pre_draw_winner_file_content = b""
+        self._pre_draw_winner_filename = ""
+
+        return rx.toast.info(
+            "Pre-draw winner file selection cleared."
+        )
 
     def _set_current_prize(self):
         """Synchronize UI prize fields with the current prize."""
@@ -502,123 +569,6 @@ class LuckyDrawState(rx.State):
 
         return True
 
-    async def redraw_missing_candidate(self):
-        """
-        Reject the current candidate because they are not present,
-        then select another candidate for the SAME prize.
-
-        The prize does not advance.
-        The rejected guest cannot be selected again during this session.
-        """
-
-        if self.draw_status != "CANDIDATE":
-            yield rx.toast.error(
-                "There is no candidate awaiting confirmation."
-            )
-            return
-
-        candidate = dict(self.pending_candidate or {})
-
-        if not candidate:
-            yield rx.toast.error(
-                "No pending candidate to redraw."
-            )
-            return
-
-        guest_id = self._guest_id(candidate)
-
-        if not guest_id:
-            yield rx.toast.error(
-                "Candidate has no guest ID."
-            )
-            return
-
-        # ------------------------------------------------------------
-        # Reject current candidate.
-        # ------------------------------------------------------------
-
-        self._exclude_guest_for_redraw(
-            candidate,
-            reason="absent",
-        )
-
-        logger.info(
-            "Lucky Draw redraw requested: event=%s prize=%s "
-            "excluded_guest=%s redraw_count=%s",
-            self.current_event_id,
-            self.lucky_draw_prize_name,
-            guest_id,
-            self.redraw_count,
-        )
-
-        # Clear the current candidate before selecting another one.
-        self.pending_candidate = {}
-        self.lucky_draw_winner = {}
-        self.lucky_draw_current_name = ""
-        self.lucky_draw_current_id = ""
-
-        self.draw_status = "REDRAW"
-        self.lucky_draw_spinning = False
-
-        yield
-
-        # ------------------------------------------------------------
-        # Find another candidate.
-        # ------------------------------------------------------------
-
-        candidates = self._available_draw_candidates()
-
-        if not candidates:
-            self.draw_status = "NO_CANDIDATES"
-            self.lucky_draw_spinner_open = False
-            self.waiting_for_next_prize = False
-
-            logger.warning(
-                "Lucky Draw has no candidates after redraw: "
-                "event=%s prize=%s",
-                self.current_event_id,
-                self.lucky_draw_prize_name,
-            )
-
-            yield rx.toast.error(
-                "No eligible guests remain for this prize."
-            )
-            return
-
-        # ------------------------------------------------------------
-        # Randomly select a replacement.
-        # ------------------------------------------------------------
-
-        candidate = random.choice(candidates)
-
-        self.pending_candidate = dict(candidate)
-
-        self.lucky_draw_current_name = str(
-            candidate.get("name")
-            or candidate.get("Name")
-            or ""
-        )
-
-        self.lucky_draw_current_id = self._guest_id(candidate)
-
-        self.draw_status = "CANDIDATE"
-        self.lucky_draw_spinning = False
-        self.lucky_draw_spinner_open = True
-
-        logger.info(
-            "Lucky Draw replacement candidate selected: "
-            "event=%s prize=%s guest=%s redraw_count=%s",
-            self.current_event_id,
-            self.lucky_draw_prize_name,
-            self.lucky_draw_current_id,
-            self.redraw_count,
-        )
-
-        yield rx.toast.success(
-            "New candidate selected. Please verify their presence."
-        )
-
-        yield
 
     def reset_draw_lifecycle(self):
         """Reset runtime draw state without deleting configured prizes."""
@@ -660,7 +610,7 @@ class LuckyDrawState(rx.State):
 
     async def open_participant_import(self):
         """Prepare the existing Guest Upload dialog for standalone Lucky Draw."""
-        from guest_management.state.auth_state import AuthState
+        from ..state.auth_state import AuthState
 
         if self.lucky_draw_event_type != "lucky_draw":
             yield rx.toast.error(
@@ -741,7 +691,7 @@ class LuckyDrawState(rx.State):
                 or getattr(guest_state, "current_event_id", 0)
                 or 0
             )
-
+            await self.load_pre_draw_winners()
             if not event_id:
                 self.lucky_draw_eligible_guests = []
                 return
@@ -813,6 +763,136 @@ class LuckyDrawState(rx.State):
                 self.current_event_id,
             )
             self.lucky_draw_eligible_guests = []
+
+    async def set_pre_draw_winner_file(
+        self,
+        files: List[rx.UploadFile],
+    ):
+        """Read and stage the preliminary-winner Excel file."""
+        if not files:
+            self.pre_draw_winner_selected_file_name = ""
+            self._pre_draw_winner_file_content = b""
+            self._pre_draw_winner_filename = ""
+            return
+
+        file = files[0]
+
+        filename = str(file.filename or "")
+        extension = filename.lower()
+
+        if not extension.endswith(
+            (".xlsx", ".xls", ".xlsm")
+        ):
+            self.pre_draw_winner_selected_file_name = ""
+            self._pre_draw_winner_file_content = b""
+            self._pre_draw_winner_filename = ""
+
+            yield rx.toast.error(
+                "Please upload a valid Excel file (.xlsx, .xls, or .xlsm)."
+            )
+            return
+
+        try:
+            content = await file.read()
+
+            if not content:
+                raise ValueError("The uploaded file is empty.")
+
+            self._pre_draw_winner_file_content = content
+            self._pre_draw_winner_filename = filename
+            self.pre_draw_winner_selected_file_name = filename
+
+            yield rx.toast.success(
+                f"Pre-draw winner file loaded: {filename}"
+            )
+
+        except Exception as exc:
+            logger.exception(
+                "Unable to read pre-draw winner file"
+            )
+
+            self.pre_draw_winner_selected_file_name = ""
+            self._pre_draw_winner_file_content = b""
+            self._pre_draw_winner_filename = ""
+
+            yield rx.toast.error(
+                f"Unable to read the file: {exc}"
+            )
+
+    async def process_pre_draw_winner_upload(self):
+        """
+        Validate and persist the preliminary-winner Excel file.
+
+        Existing persisted preliminary winners are replaced only after the
+        uploaded file has successfully passed parsing and validation.
+        """
+        if not self._pre_draw_winner_file_content:
+            yield rx.toast.error(
+                "No pre-draw winner file selected."
+            )
+            return
+
+        if not self.current_event_id:
+            yield rx.toast.error(
+                "No Lucky Draw event selected."
+            )
+            return
+
+        try:
+            event_id = int(self.current_event_id)
+
+            service = PreDrawWinnerService()
+
+            # Parse + validate + persist.
+            persisted = service.import_file(
+                event_id,
+                self._pre_draw_winner_file_content,
+            )
+
+            # Clear uploaded bytes immediately after persistence.
+            self._pre_draw_winner_file_content = b""
+
+            self.pre_draw_winner_filename = (
+                self._pre_draw_winner_filename
+            )
+
+            self._pre_draw_winner_filename = ""
+
+            self.pre_draw_winner_selected_file_name = ""
+
+            # Refresh from the database rather than trusting the upload result.
+            await self.load_pre_draw_winners()
+
+            # Refresh candidate pool because preliminary winners may have
+            # changed the live-draw eligibility.
+            await self.load_lucky_draw_eligible_guests()
+
+            yield rx.toast.success(
+                f"{len(persisted)} preliminary winner(s) imported successfully."
+            )
+
+        except ValueError as exc:
+            logger.warning(
+                "Pre-draw winner validation failed for event %s: %s",
+                self.current_event_id,
+                exc,
+            )
+
+            self._pre_draw_winner_file_content = b""
+
+            yield rx.toast.error(str(exc))
+
+        except Exception as exc:
+            logger.exception(
+                "Pre-draw winner import failed for event %s",
+                self.current_event_id,
+            )
+
+            self._pre_draw_winner_file_content = b""
+
+            yield rx.toast.error(
+                f"Unable to import preliminary winners: {exc}"
+            )
 
     def load_current_prize(self):
         """Synchronize the UI fields with ``current_prizes[current_prize_index]``."""
@@ -906,7 +986,7 @@ class LuckyDrawState(rx.State):
     excel_filename: str = ""
 
     # Event name for display
-    lucky_draw_event_name: str = ""
+
 
     is_loading: bool = False
 
@@ -938,6 +1018,267 @@ class LuckyDrawState(rx.State):
             return "All participants"
         return "Attending guests only" if self.lucky_draw_only_present else "All guests"
 
+    @rx.var
+    def pre_draw_winner_count(self) -> int:
+        """Return the number of persisted preliminary winners."""
+        return len(self.pre_draw_winners)
+
+    async def load_pre_draw_winners(self):
+        """
+        Load preliminary winners from the authoritative database.
+
+        Preliminary winners are a separate dataset from live Lucky Draw
+        winners and must never be copied into winners_list.
+        """
+        try:
+            event_id = int(self.current_event_id or 0)
+
+            if not event_id:
+                self.pre_draw_winners = []
+                return
+
+            service = PreDrawWinnerService()
+
+            self.pre_draw_winners = [
+                dict(winner)
+                for winner in service.get_by_event(event_id)
+            ]
+
+            logger.info(
+                "Loaded %d pre-draw winners for event %s",
+                len(self.pre_draw_winners),
+                event_id,
+            )
+
+        except Exception:
+            logger.exception(
+                "Unable to load pre-draw winners for event %s",
+                self.current_event_id,
+            )
+            self.pre_draw_winners = []
+
+    async def load_pre_draw_display_participants(self):
+        """
+        Prepare the participant list for the public pre-draw display.
+
+        The participant list comes from the same Lucky Draw eligibility pool.
+        Preliminary winners are joined onto that list by Guest ID.
+
+        This method does not modify winners_list and does not affect the
+        live Lucky Draw lifecycle.
+        """
+        try:
+            await self.load_lucky_draw_eligible_guests()
+            await self.load_pre_draw_winners()
+
+            winner_map = {
+                str(winner.get("guest_id") or "").strip(): dict(winner)
+                for winner in self.pre_draw_winners
+                if str(winner.get("guest_id") or "").strip()
+            }
+
+            display_rows: List[Dict[str, Any]] = []
+
+            for index, guest in enumerate(
+                    self.lucky_draw_eligible_guests,
+                    start=1,
+            ):
+                guest_id = str(
+                    guest.get("guest_id")
+                    or guest.get("id")
+                    or ""
+                ).strip()
+
+                if not guest_id:
+                    continue
+
+                preliminary = winner_map.get(guest_id)
+
+                row = {
+                    "display_number": index,
+                    "name": str(
+                        guest.get("name")
+                        or "Guest"
+                    ),
+                    "guest_id": guest_id,
+                    "table_number": guest.get(
+                        "table_number",
+                        "TBD",
+                    ),
+                    "is_pre_draw_winner": preliminary is not None,
+                    "pre_draw_prize": (
+                        str(
+                            preliminary.get("prize_name")
+                            or "Pre-Draw Prize"
+                        )
+                        if preliminary
+                        else ""
+                    ),
+                    "pre_draw_value": (
+                        str(
+                            preliminary.get("prize_value")
+                            or ""
+                        )
+                        if preliminary
+                        else ""
+                    ),
+                    "pre_draw_image": (
+                        str(
+                            preliminary.get("image_url")
+                            or ""
+                        )
+                        if preliminary
+                        else ""
+                    ),
+                }
+
+                display_rows.append(row)
+
+            self.pre_draw_display_participants = display_rows
+
+            # Always start the public display from page 1.
+            self.predraw_page = 0
+
+            logger.info(
+                "Prepared %d participants for pre-draw display "
+                "for event %s",
+                len(display_rows),
+                self.current_event_id,
+            )
+
+        except Exception:
+            logger.exception(
+                "Unable to prepare pre-draw display for event %s",
+                self.current_event_id,
+            )
+
+            self.pre_draw_display_participants = []
+
+    def _pre_draw_winner_ids(self) -> set[str]:
+        """Return normalized Guest IDs that already won a preliminary prize."""
+        return {
+            str(winner.get("guest_id") or "").strip()
+            for winner in self.pre_draw_winners
+            if str(winner.get("guest_id") or "").strip()
+        }
+
+    @rx.var
+    def predraw_page_count(self) -> int:
+        """Return the number of public pre-draw display pages."""
+        total = len(self.pre_draw_display_participants)
+
+        if total <= 0:
+            return 0
+
+        return (
+                total + self.predraw_page_size - 1
+        ) // self.predraw_page_size
+
+    @rx.var
+    def predraw_visible_participants(self) -> List[Dict[str, Any]]:
+        """Return one page of public pre-draw participants."""
+        start = self.predraw_page * self.predraw_page_size
+        end = start + self.predraw_page_size
+
+        return list(
+            self.pre_draw_display_participants[start:end]
+        )
+
+    @rx.var
+    def predraw_is_last_page(self) -> bool:
+        """Whether the current public display page is the final page."""
+        page_count = self.predraw_page_count
+
+        if page_count <= 0:
+            return True
+
+        return self.predraw_page >= page_count - 1
+
+    @rx.var
+    def predraw_page_indicator(self) -> str:
+        """Return the current public display page indicator."""
+        page_count = self.predraw_page_count
+
+        if page_count <= 0:
+            return "PAGE 0 / 0"
+
+        return (
+            f"PAGE {self.predraw_page + 1} / "
+            f"{page_count}"
+        )
+
+    @rx.var
+    def predraw_range_label(self) -> str:
+        """Return the participant range shown on the current page."""
+        total = len(self.pre_draw_display_participants)
+
+        if total <= 0:
+            return "No participants"
+
+        start = (
+                        self.predraw_page *
+                        self.predraw_page_size
+                ) + 1
+
+        end = min(
+            start + self.predraw_page_size - 1,
+            total,
+        )
+
+        return f"Participants {start}–{end} of {total}"
+
+    def predraw_next_page(self):
+        """Advance the public pre-draw display by one page."""
+        page_count = self.predraw_page_count
+
+        if page_count <= 0:
+            self.predraw_page = 0
+            return
+
+        if self.predraw_page >= page_count - 1:
+            self.predraw_page = 0
+        else:
+            self.predraw_page += 1
+
+    def predraw_previous_page(self):
+        """Move the public pre-draw display back one page."""
+        page_count = self.predraw_page_count
+
+        if page_count <= 0:
+            self.predraw_page = 0
+            return
+
+        if self.predraw_page <= 0:
+            self.predraw_page = page_count - 1
+        else:
+            self.predraw_page -= 1
+    def reset_predraw_presentation(self):
+        """Return the pre-draw presentation to its first page."""
+        self.predraw_page = 0
+
+    @rx.var
+    def predraw_display_mode_label(self) -> str:
+        """Return a human-readable pre-draw display mode."""
+        if self.predraw_display_mode == "different":
+            return "Different slides per screen"
+        return "Same synchronized presentation"
+
+    def set_predraw_display_mode(self, mode: str):
+        """Set the pre-draw presentation mode."""
+        mode = str(mode or "").strip().lower()
+        if mode not in {"same", "different"}:
+            logger.warning("Ignoring invalid pre-draw display mode: %s", mode)
+            return
+        self.predraw_display_mode = mode
+
+    def set_predraw_screen_count(self, value):
+        """Set the number of physical pre-draw screens/feeds required."""
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            count = 1
+        self.predraw_screen_count = max(1, min(count, 20))
+
     # --- Guest Loading ---
     async def set_excel_prize_file(self, files: List[rx.UploadFile]):
         if files and len(files) > 0:
@@ -960,12 +1301,9 @@ class LuckyDrawState(rx.State):
         yield
 
         try:
-            try:
-                from guest_management.services.excel_service_ranked import ExcelService
-            except ImportError:
+            from ..services.excel_service_ranked import ExcelService
 
-
-                service = ExcelService()
+            service = ExcelService()
 
             prizes = service.parse_prize_file(
                 self._prize_file_content
@@ -1332,51 +1670,6 @@ class LuckyDrawState(rx.State):
     # PRODUCTION LUCKY DRAW LIFECYCLE
     # ========================================================================
 
-    def _normalise_guest_id(self, guest: Dict[str, Any]) -> str:
-        """Return a stable guest ID."""
-        return str(
-            guest.get("guest_id")
-            or guest.get("Guest ID")
-            or guest.get("id")
-            or ""
-        ).strip()
-
-    def _candidate_is_valid(
-            self,
-            candidate: Dict[str, Any],
-    ) -> bool:
-        """Validate a candidate immediately before confirmation."""
-
-        if not candidate:
-            return False
-
-        guest_id = self._guest_id(candidate)
-
-        if not guest_id:
-            return False
-
-        guest_id = str(guest_id).strip()
-
-        # Already excluded because absent/redrawn.
-        if guest_id in {
-            str(value).strip()
-            for value in self.excluded_guest_ids
-        }:
-            return False
-
-        # Already a winner.
-        winner_ids = {
-            str(winner.get("guest_id") or "").strip()
-            for winner in self.winners_list
-            if str(winner.get("guest_id") or "").strip()
-        }
-
-        if guest_id in winner_ids:
-            return False
-
-        # Current pending candidate is valid only when explicitly
-        # being validated for confirmation.
-        return True
 
     def _reset_candidate_state(self):
         """Clear the current pending candidate."""
@@ -1727,27 +2020,6 @@ class LuckyDrawState(rx.State):
 
         yield
 
-    def reset_draw_lifecycle(self):
-        """
-        Reset only the live draw lifecycle.
-
-        Prize configuration is intentionally preserved.
-        """
-        self.draw_status = "IDLE"
-        self.pending_candidate = {}
-        self.redraw_count = 0
-        self.current_prize_redraw_count = 0
-        self.excluded_guest_ids = []
-        self.draw_locked = False
-
-        self.lucky_draw_spinning = False
-        self.lucky_draw_winner = {}
-        self.lucky_draw_current_name = ""
-        self.lucky_draw_current_id = ""
-
-        self.current_prize_index = 0
-        self.draw_finished = False
-        self.waiting_for_next_prize = False
 
     async def start_lucky_draw(self):
         """Start the draw animation for the current prize."""
@@ -1759,10 +2031,10 @@ class LuckyDrawState(rx.State):
             return
 
         if self.draw_status not in {
-            IDLE,
-            READY,
+            DRAW_IDLE,
+            "READY",
             CONFIRMED,
-            REDRAW,
+            "REDRAW",
         }:
             yield rx.toast.warning(
                 "The current draw cannot be started yet."
@@ -1860,16 +2132,6 @@ class LuckyDrawState(rx.State):
                 f"Unable to start draw: {exc}"
             )
 
-    async def draw_candidate(self):
-        """
-        Public lifecycle handler.
-
-        Starts the current prize draw and leaves the result in
-        CANDIDATE state. No winner is persisted here.
-        """
-
-        async for update in self.start_lucky_draw():
-            yield update
 
     async def _select_candidate(self):
         """
@@ -2251,77 +2513,6 @@ class LuckyDrawState(rx.State):
         self.lucky_draw_current_id = ""
         self.lucky_draw_show_new_draw_dialog = True
 
-    async def setup_complete_and_go_to_display(self):
-        """Complete setup and open the live display."""
-
-        if not self.current_event_id:
-            yield rx.toast.error(
-                "No event selected."
-            )
-            return
-
-        if not self.lucky_draw_eligible_guests:
-            await self.load_lucky_draw_eligible_guests()
-
-        if not self.lucky_draw_eligible_guests:
-            yield rx.toast.error(
-                "No eligible guests available."
-            )
-            return
-
-        if not self.current_prizes:
-            yield rx.toast.error(
-                "No prizes configured."
-            )
-            return
-
-        self.current_prize_index = 0
-
-        self.reset_draw_lifecycle()
-
-        self._set_current_prize()
-
-        self.lucky_draw_setup_complete = True
-        self.draw_status = READY
-
-        logger.info(
-            "Lucky Draw setup completed for event %s",
-            self.current_event_id,
-        )
-
-        yield rx.toast.success(
-            "Lucky Draw is ready."
-        )
-
-        display_payload = {
-            "prize_mode": self.prize_mode,
-            "current_prizes": self.current_prizes,
-            "current_prize_index": self.current_prize_index,
-            "lucky_draw_excluded": self.lucky_draw_excluded,
-            "lucky_draw_only_present": self.lucky_draw_only_present,
-            "current_event_id": self.current_event_id,
-            "current_event_name": self.lucky_draw_event_name,
-            "event_type": str(
-                (self.current_event or {}).get("event_type") or ""
-            ),
-        }
-        payload_json = json.dumps(
-            display_payload,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        payload_b64 = base64.urlsafe_b64encode(
-            payload_json.encode("utf-8")
-        ).decode("ascii").rstrip("=")
-
-        yield rx.call_script(
-            f"""
-            window.open(
-                '/lucky-draw-display?event_id={int(self.current_event_id)}&data={payload_b64}',
-                '_blank'
-            );
-            """
-        )
 
     def redirect_to_lucky_draw(self):
         """Redirect back to lucky draw setup page."""

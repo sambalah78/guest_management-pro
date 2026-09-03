@@ -117,6 +117,189 @@ class ExcelService:
         except ValueError:
             return None
 
+    def parse_pre_draw_winners_file(
+        self,
+        content: bytes,
+    ) -> List[Dict[str, Any]]:
+        """
+        Parse a preliminary-winner Excel file.
+
+        Required:
+            - Name
+            - Guest ID / ID
+
+        Optional:
+            - Prize
+            - Value
+            - Image / Image URL / Photo / URL
+
+        Returns normalized records suitable for PreDrawWinnerService.
+        """
+
+        if not content:
+            raise ValueError("The uploaded file is empty.")
+
+        try:
+            df = pd.read_excel(io.BytesIO(content))
+        except Exception as exc:
+            logger.exception("Unable to read preliminary-winner Excel file")
+            raise ValueError(
+                "Could not read the file. Please upload a valid Excel file."
+            ) from exc
+
+        if df.empty:
+            raise ValueError(
+                "The uploaded preliminary-winner file is empty."
+            )
+
+        # --------------------------------------------------------------
+        # Normalize column names for flexible client Excel formats.
+        # --------------------------------------------------------------
+
+        column_map: Dict[str, str] = {}
+
+        for column in df.columns:
+            normalized = str(column).strip().lower()
+            normalized = normalized.replace("_", " ")
+            normalized = " ".join(normalized.split())
+
+            column_map[normalized] = column
+
+        def find_column(*names: str):
+            for name in names:
+                normalized_name = name.strip().lower()
+                normalized_name = normalized_name.replace("_", " ")
+                normalized_name = " ".join(normalized_name.split())
+
+                if normalized_name in column_map:
+                    return column_map[normalized_name]
+
+            return None
+
+        name_column = find_column(
+            "name",
+            "full name",
+            "guest name",
+            "winner name",
+            "fullname",
+        )
+
+        guest_id_column = find_column(
+            "id",
+            "guest id",
+            "guest_id",
+            "employee id",
+            "member id",
+            "user id",
+            "userid",
+        )
+
+        prize_column = find_column(
+            "prize",
+            "prize name",
+            "prize_name",
+            "winner prize",
+            "reward",
+            "title",
+        )
+
+        value_column = find_column(
+            "value",
+            "prize value",
+            "prize_value",
+            "price",
+            "amount",
+            "worth",
+        )
+
+        image_column = find_column(
+            "image",
+            "image url",
+            "image_url",
+            "photo",
+            "photo url",
+            "url",
+        )
+
+        # --------------------------------------------------------------
+        # Required columns.
+        # --------------------------------------------------------------
+
+        missing_columns = []
+
+        if name_column is None:
+            missing_columns.append("Name")
+
+        if guest_id_column is None:
+            missing_columns.append("Guest ID")
+
+        if missing_columns:
+            raise ValueError(
+                "Missing required column(s): "
+                + ", ".join(missing_columns)
+                + "."
+            )
+
+        # --------------------------------------------------------------
+        # Convert rows into normalized records.
+        # --------------------------------------------------------------
+
+        winners: List[Dict[str, Any]] = []
+
+        for row_number, (_, row) in enumerate(df.iterrows(), start=2):
+            name = str(row.get(name_column, "") or "").strip()
+            guest_id = str(row.get(guest_id_column, "") or "").strip()
+
+            # Treat pandas NaN values as empty.
+            if name.lower() == "nan":
+                name = ""
+
+            if guest_id.lower() == "nan":
+                guest_id = ""
+
+            if not guest_id:
+                raise ValueError(
+                    f"Row {row_number}: Guest ID is required."
+                )
+
+            if not name:
+                raise ValueError(
+                    f"Row {row_number}: Name is required."
+                )
+
+            def clean_optional(column) -> str:
+                if column is None:
+                    return ""
+
+                value = row.get(column, "")
+
+                if pd.isna(value):
+                    return ""
+
+                return str(value).strip()
+
+            winners.append(
+                {
+                    "guest_id": guest_id,
+                    "name": name,
+                    "prize_name": clean_optional(prize_column),
+                    "prize_value": clean_optional(value_column),
+                    "image_url": clean_optional(image_column),
+                }
+            )
+
+        if not winners:
+            raise ValueError(
+                "No valid preliminary winners were found."
+            )
+
+        logger.info(
+            "Parsed %d preliminary winners from Excel",
+            len(winners),
+        )
+
+        return winners
+
     def parse_prize_file(self, content: bytes) -> List[Dict[str, Any]]:
         """Parse a prize Excel file and normalize ranking metadata.
 

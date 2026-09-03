@@ -14,6 +14,7 @@ from .winner_repository import WinnerRepository
 from .google_drive_connection_repository import (
     GoogleDriveConnectionRepository,
 )
+from .pre_draw_winner_repository import PreDrawWinnerRepository
 
 __all__ = [
     "BaseRepository",
@@ -27,4 +28,5 @@ __all__ = [
     "CheckinRepository",
     "WinnerRepository",
     "GoogleDriveConnectionRepository",
+    "PreDrawWinnerRepository",
 ]

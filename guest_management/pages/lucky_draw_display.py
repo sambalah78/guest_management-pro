@@ -42,7 +42,7 @@ def _participant_card(guest):
 
 def _winner_card(winner):
     """Render one confirmed winner for the live audience."""
-    prize_value = str(winner.get("prize_value", "") or "").strip()
+    prize_value = str(winner.get("prize_value", "") | "").strip()
     return rx.box(
         rx.hstack(
             rx.box(
@@ -60,7 +60,7 @@ def _winner_card(winner):
             ),
             rx.spacer(),
             rx.text(
-                winner.get("prize_name", "") or "Prize",
+                winner.get("prize_name", "") | "Prize",
                 color=GOLD,
                 font_size="0.72em",
                 font_weight="700",
@@ -154,7 +154,7 @@ def _current_prize():
                 padding="0.4em",
             ),
             rx.box(
-                rx.icon(tag="gift", size=[42, 50, 58]),
+                rx.icon(tag="gift", size=58),
                 width=["125px", "155px", "190px"],
                 height=["125px", "155px", "190px"],
                 display="flex",
@@ -168,7 +168,7 @@ def _current_prize():
         rx.heading(
             LuckyDrawState.lucky_draw_prize_name,
             color="white",
-            size=["5", "6", "7"],
+            size=rx.breakpoints(initial="5", md="6", lg="7"),
             text_align="center",
             margin_top="0.7em",
             line_height="1.1",
@@ -514,7 +514,7 @@ def lucky_draw_display_page():
                     rx.heading(
                         LuckyDrawState.lucky_draw_event_name,
                         color="white",
-                        size=["4", "5"],
+                        size=rx.breakpoints(initial="4", md="5"),
                     ),
                     spacing="1",
                     align="start",
@@ -540,7 +540,7 @@ def lucky_draw_display_page():
             rx.grid(
                 _current_prize(),
                 _candidate_panel(),
-                columns=["1fr", "1fr"],
+                columns="repeat(2, minmax(0, 1fr))",
                 spacing="4",
                 width="100%",
             ),
@@ -581,7 +581,7 @@ def lucky_draw_display_page():
                         LuckyDrawState.lucky_draw_eligible_guests[:30],
                         _participant_card,
                     ),
-                    columns=["2", "3", "5"],
+                    columns=rx.breakpoints(initial="2", md="3", lg="5"),
                     spacing="2",
                     width="100%",
                     margin_top="0.8em",
@@ -635,7 +635,7 @@ def lucky_draw_display_page():
                             LuckyDrawState.winners_list[:6],
                             _winner_card,
                         ),
-                        columns=["1", "2", "3"],
+                        columns=rx.breakpoints(initial="1", md="2", lg="3"),
                         spacing="2",
                         width="100%",
                         margin_top="0.8em",

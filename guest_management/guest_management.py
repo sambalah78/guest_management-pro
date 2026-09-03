@@ -1,15 +1,15 @@
-from guest_management.core.config import settings
-from guest_management.database import init_db
+from .core.config import settings
+from .database import init_db
 
 # guest_management.py
 import reflex as rx
-from guest_management.auth_api import api as auth_api
+from .auth_api import api as auth_api
 
-from guest_management.pages import (
+from .pages  import (
     home_page, sign_in, events, create_event,
     dashboard, check_in, success, already_checked, scanner, lucky_draw,
     voucher_manager, stall_landing, stall_menu, scanner_guest, about,
-    products, contact, print_qr, select_event_type, lucky_draw_display, splash, health
+    products, contact, print_qr, select_event_type, lucky_draw_display, splash, health, lucky_draw_predraw, pre_draw_display
 
 )
 if settings.is_production:
@@ -17,7 +17,7 @@ if settings.is_production:
 else:
     init_db()
 
-from guest_management.state import (
+from .state import (
     GuestState, EventState, ScannerState, SuccessState, LuckyDrawState,
     AuthState, EmailState, VoucherState, UIState
 )
@@ -138,7 +138,17 @@ app.add_page(
     ],
     title="Lucky Draw Display",
 )
-
+app.add_page(
+    lucky_draw_predraw.lucky_draw_predraw_page,
+    route="/lucky-draw-predraw",
+    title="Lucky Draw Pre-Draw",
+)
+app.add_page(
+    pre_draw_display.pre_draw_display_page,
+    route="/lucky-draw/pre-draw-display",
+    title="Pre-Draw Display",
+    on_load=LuckyDrawState.load_pre_draw_display_participants,
+)
 app.add_page(about.about_page, route="/about", title="About - EventLah")
 app.add_page(products.products_page, route="/products", title="Products - EventLah")
 app.add_page(contact.contact_page, route="/contact", title="Contact - EventLah")
