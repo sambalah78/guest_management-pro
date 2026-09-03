@@ -1,7 +1,7 @@
 # pages/create_event.py
 import reflex as rx
 from guest_management.state import State, EventState, UIState
-from guest_management.utils.constants import GOLD, BLACK, DARK_GRAY
+from guest_management.utils.constants import GOLD, BLACK, DARK_GRAY, EVENT_TYPES
 
 
 def create_event_page():
@@ -261,6 +261,64 @@ def create_event_page():
                     width="100%",
                 ),
 
+                # Lucky Draw Settings
+                rx.cond(
+                    EventState.event_type == "lucky_draw",
+                    rx.card(
+                        rx.vstack(
+                            rx.hstack(
+                                rx.icon(
+                                    tag="gift",
+                                    size=16,
+                                    color=GOLD,
+                                ),
+                                rx.text(
+                                    "Lucky Draw",
+                                    color=GOLD,
+                                    weight="bold",
+                                    size="2",
+                                ),
+                                spacing="1",
+                            ),
+
+                            rx.text(
+                                "Standalone lucky draw event",
+                                color="white",
+                                size="2",
+                            ),
+
+                            rx.text(
+                                "Guest list and prizes can be configured "
+                                "after the event is created.",
+                                color="gray",
+                                size="1",
+                            ),
+
+                            rx.hstack(
+                                *[
+                                    rx.badge(
+                                        feature,
+                                        color_scheme="green",
+                                        size="1",
+                                    )
+                                    for feature in EVENT_TYPES["lucky_draw"]["display_features"]
+                                ],
+                                wrap="wrap",
+                                spacing="1",
+                            ),
+
+                            spacing="2",
+                            align="start",
+                            width="100%",
+                        ),
+                        bg=DARK_GRAY,
+                        border=f"1px solid {GOLD}",
+                        border_radius="10px",
+                        padding="1em",
+                        width="100%",
+                    ),
+                ),
+
                 # RIGHT COLUMN - Logo Upload
                 rx.vstack(
                     rx.cond(
@@ -359,7 +417,7 @@ def create_event_page():
                                     accept={"image/*": [".png", ".jpg", ".jpeg"]},
                                     max_files=1,
                                     on_drop=EventState.handle_invitation_upload,
-                                    boder="none",
+                                    border="none",
                                     padding="0.25em"
                                 ),
                                 rx.cond(

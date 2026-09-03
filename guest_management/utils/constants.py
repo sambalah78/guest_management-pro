@@ -2,17 +2,41 @@
 """Application constants."""
 
 # Colors
-GOLD = "#D4AF37"
-BLACK = "#000000"
-DARK_GRAY = "#696969"
-LIGHT_GRAY = "#D3D3D3"
-WHITE = "#FFFFFF"
+# ---------------------------------------------------------------------------
+# Legacy colour constants
+# ---------------------------------------------------------------------------
+
+from .theme import (
+    GOLD,
+    NAVY,
+    TEXT,
+    TEXT_MUTED,
+    SURFACE,
+    BORDER,
+)
+
+BLACK = NAVY
+DARK_GRAY = NAVY
+LIGHT_GRAY = BORDER
+WHITE = SURFACE
 
 # Event Types
+# ---------------------------------------------------------------------------
+# Centralized event configuration.
+# - name/icon/description/display_features are presentation metadata.
+# - features contains application capability flags.
+# - fields contains the guest fields supported by the event type.
+# ---------------------------------------------------------------------------
 EVENT_TYPES = {
     "company_dinner": {
         "name": "Company Dinner",
         "icon": "🏢",
+        "description": "Corporate events, annual dinners, team building",
+        "display_features": [
+            "QR Check-in",
+            "Email",
+            "Lucky Draw",
+        ],
         "features": {
             "qr_checkin": True,
             "email_invitations": True,
@@ -26,11 +50,25 @@ EVENT_TYPES = {
             "dietary_restrictions": True,
             "plus_one_management": False,
         },
-        "fields": ["name", "email", "id", "table", "dietary_restrictions", "employee_id"]
+        "fields": [
+            "name",
+            "email",
+            "id",
+            "table",
+            "dietary_restrictions",
+            "employee_id",
+        ],
     },
     "wedding_dinner": {
         "name": "Wedding Dinner",
         "icon": "💒",
+        "description": "Wedding receptions and engagement parties",
+        "display_features": [
+            "QR Check-in",
+            "Email",
+            "Plus-One",
+            "Dietary",
+        ],
         "features": {
             "qr_checkin": True,
             "email_invitations": True,
@@ -44,12 +82,27 @@ EVENT_TYPES = {
             "dietary_restrictions": True,
             "plus_one_management": True,
         },
-        "fields": ["name", "email", "id", "table", "dietary_restrictions", "parent_name", "parent_phone",
-                   "plus_one_name"]
+        "fields": [
+            "name",
+            "email",
+            "id",
+            "table",
+            "dietary_restrictions",
+            "parent_name",
+            "parent_phone",
+            "plus_one_name",
+        ],
     },
     "sports_day": {
         "name": "Sports Day",
         "icon": "⚽",
+        "description": "Sports events, tournaments and family day",
+        "display_features": [
+            "QR Check-in",
+            "Food Vouchers",
+            "Stalls",
+            "Lucky Draw",
+        ],
         "features": {
             "qr_checkin": True,
             "email_invitations": True,
@@ -63,11 +116,27 @@ EVENT_TYPES = {
             "dietary_restrictions": False,
             "plus_one_management": False,
         },
-        "fields": ["name", "email", "id", "table", "amount", "team_name", "parent_name", "parent_phone", "jersey_size"]
+        "fields": [
+            "name",
+            "email",
+            "id",
+            "table",
+            "amount",
+            "team_name",
+            "parent_name",
+            "parent_phone",
+            "jersey_size",
+        ],
     },
     "lucky_draw": {
         "name": "Lucky Draw",
         "icon": "🎁",
+        "description": "Standalone lucky draw events with guests and prizes",
+        "display_features": [
+            "Guest List",
+            "Prize Management",
+            "Lucky Draw",
+        ],
         "features": {
             "qr_checkin": False,
             "email_invitations": False,

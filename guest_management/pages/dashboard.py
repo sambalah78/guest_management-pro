@@ -531,7 +531,7 @@ def _dashboard_content() -> rx.Component:
                         EventState.show_lucky_draw,
                         rx.menu.item(
                             rx.hstack(rx.icon(tag="gift", size=12), rx.text("Lucky Draw", size="1"), spacing="2"),
-                            on_click=rx.redirect("/lucky-draw"),
+                            on_click=rx.redirect(f"/lucky-draw/{State.current_event_id}"),
                         ),
                     ),
                     rx.cond(EventState.show_lucky_draw, rx.menu.separator()),

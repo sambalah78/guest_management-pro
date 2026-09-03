@@ -39,7 +39,7 @@ class EventType(str, Enum):
     COMPANY_DINNER = "company_dinner"
     WEDDING_DINNER = "wedding_dinner"
     SPORTS_DAY = "sports_day"
-
+    LUCKY_DRAW = "lucky_draw"
 
 @dataclass(slots=True)
 class Event:

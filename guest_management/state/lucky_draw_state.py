@@ -10,8 +10,16 @@ import base64
 import asyncio
 
 import logging
-from guest_management.services.winner_service import WinnerService
-from guest_management.state.guest_state import GuestState
+from ..services.winner_service import WinnerService
+from ..state.guest_state import GuestState
+from ..utils.constants import EVENT_TYPES
+from ..state.auth_state import AuthState
+from ..repositories import EventRepository, GuestRepository
+from ..services.excel_service import ExcelService
+
+
+
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -78,6 +86,7 @@ class LuckyDrawState(rx.State):
     lucky_draw_event_name: str = ""
     current_event_id: str = ""
     current_event: Optional[Dict[str, Any]] = None
+    lucky_draw_event_type: str = ""
 
     # Guests
     lucky_draw_only_present: bool = True
@@ -212,10 +221,10 @@ class LuckyDrawState(rx.State):
             candidates.append(dict(guest))
 
         return candidates
-    
+
     def _candidate_is_valid(
-        self,
-        candidate: Dict[str, Any],
+            self,
+            candidate: Dict[str, Any],
     ) -> bool:
         """Validate a candidate immediately before confirmation."""
         if not candidate:
@@ -329,8 +338,6 @@ class LuckyDrawState(rx.State):
 
             event_id = int(match.group(1))
 
-            from guest_management.state.auth_state import AuthState
-            from guest_management.repositories import EventRepository
 
             auth = await self.get_state(AuthState)
 
@@ -354,9 +361,14 @@ class LuckyDrawState(rx.State):
                 yield rx.redirect("/events")
                 return
 
-            if event.get("event_type") != "lucky_draw":
+            event_type = str(
+                event.get("event_type") or "company_dinner"
+            ).strip().lower()
+            event_config = EVENT_TYPES.get(event_type)
+
+            if not event_config or not event_config.get("features", {}).get("lucky_draw", False):
                 yield rx.toast.error(
-                    "This event is not configured as a Lucky Draw event."
+                    "Lucky Draw is not enabled for this event type."
                 )
                 yield rx.redirect(
                     f"/dashboard/{event_id}"
@@ -368,6 +380,16 @@ class LuckyDrawState(rx.State):
             self.lucky_draw_event_name = str(
                 event.get("name", "")
             )
+
+            self.lucky_draw_event_type = event_type
+
+            # Standalone Lucky Draw has no attendance filter. Company Dinner
+            # and Sports Day default to attending guests only, but the operator
+            # can switch between attending guests and all guests on the dashboard.
+            if event_type == "lucky_draw":
+                self.lucky_draw_only_present = False
+            else:
+                self.lucky_draw_only_present = True
 
             await self.load_lucky_draw_eligible_guests()
 
@@ -437,9 +459,9 @@ class LuckyDrawState(rx.State):
             yield update
 
     def _exclude_guest_for_redraw(
-        self,
-        guest: Dict[str, Any],
-        reason: str = "absent",
+            self,
+            guest: Dict[str, Any],
+            reason: str = "absent",
     ) -> bool:
         """
         Permanently exclude a guest from the current draw session.
@@ -598,7 +620,6 @@ class LuckyDrawState(rx.State):
 
         yield
 
-
     def reset_draw_lifecycle(self):
         """Reset runtime draw state without deleting configured prizes."""
 
@@ -628,7 +649,6 @@ class LuckyDrawState(rx.State):
         self.lucky_draw_redraw_guest_name = ""
         self.draw_status = "IDLE"
 
-
     async def redraw_current_prize(self):
         """
         Backward-compatible alias for the operator's
@@ -638,23 +658,51 @@ class LuckyDrawState(rx.State):
         async for update in self.reject_candidate_as_absent():
             yield update
 
-    async def set_lucky_draw_only_present(self, value: bool):
-        """Update the Lucky Draw eligibility filter."""
-        value = bool(value)
+    async def open_participant_import(self):
+        """Prepare the existing Guest Upload dialog for standalone Lucky Draw."""
+        from guest_management.state.auth_state import AuthState
 
-        self.lucky_draw_only_present = value
+        if self.lucky_draw_event_type != "lucky_draw":
+            yield rx.toast.error(
+                "Participant import is only available for standalone Lucky Draw."
+            )
+            return
 
+        if not self.current_event_id:
+            yield rx.toast.error("No Lucky Draw event selected.")
+            return
 
+        auth = await self.get_state(AuthState)
+
+        if not auth.user_id:
+            yield rx.redirect("/login")
+            return
 
         guest_state = await self.get_state(GuestState)
 
-        guest_state.lucky_draw_only_present = value
-        guest_state.load_lucky_draw_eligible_guests()
+        # Synchronize the existing guest-upload workflow with this event.
+        guest_state.current_event_id = str(self.current_event_id)
+        guest_state.current_event = dict(self.current_event or {})
+        guest_state.event_type = "lucky_draw"
+        guest_state.user_id = auth.user_id
+        guest_state.is_authenticated = True
 
-        self.lucky_draw_eligible_guests = list(
-            guest_state.lucky_draw_eligible_guests
-        )
+        guest_state.open_upload_dialog()
 
+        yield
+
+    async def set_lucky_draw_only_present(self, value: bool):
+        """Set the Lucky Draw eligibility filter for the current event."""
+        value = bool(value)
+
+        if self.lucky_draw_event_type == "lucky_draw":
+            self.lucky_draw_only_present = False
+            await self.load_lucky_draw_eligible_guests()
+            yield
+            return
+
+        self.lucky_draw_only_present = value
+        await self.load_lucky_draw_eligible_guests()
         yield
 
     async def set_lucky_draw_excluded(self, value: str):
@@ -663,7 +711,7 @@ class LuckyDrawState(rx.State):
 
         self.lucky_draw_excluded = value
 
-        from guest_management.state.guest_state import GuestState
+
 
         guest_state = await self.get_state(GuestState)
 
@@ -685,7 +733,7 @@ class LuckyDrawState(rx.State):
         standalone lucky-draw product without check-in.
         """
         try:
-            from guest_management.repositories import GuestRepository
+
 
             guest_state = await self.get_state(GuestState)
             event_id = int(
@@ -699,7 +747,17 @@ class LuckyDrawState(rx.State):
                 return
 
             self.current_event_id = str(event_id)
-            self.current_event = getattr(guest_state, "current_event", None)
+            if not self.current_event:
+                self.current_event = getattr(guest_state, "current_event", None)
+
+            event_type = str(
+                (self.current_event or {}).get("event_type") or
+                self.lucky_draw_event_type or
+                "company_dinner"
+            ).strip().lower()
+            self.lucky_draw_event_type = event_type
+            if event_type == "lucky_draw":
+                self.lucky_draw_only_present = False
 
             excluded = {
                 item.strip().lower()
@@ -859,6 +917,27 @@ class LuckyDrawState(rx.State):
         """Get eligible guests count."""
         return len(self.lucky_draw_eligible_guests)
 
+    @rx.var
+    def lucky_draw_uses_attendance(self) -> bool:
+        """Whether this event has an attendance-linked guest list."""
+        return self.lucky_draw_event_type != "lucky_draw"
+
+    @rx.var
+    def lucky_draw_source_label(self) -> str:
+        """Describe the participant source and eligibility model."""
+        if self.lucky_draw_event_type == "lucky_draw":
+            return "Client-supplied participant list (no check-in required)"
+        if self.lucky_draw_only_present:
+            return "Event guest list — attending guests only"
+        return "Event guest list — all guests"
+
+    @rx.var
+    def lucky_draw_eligibility_label(self) -> str:
+        """Return the current eligibility selection label."""
+        if self.lucky_draw_event_type == "lucky_draw":
+            return "All participants"
+        return "Attending guests only" if self.lucky_draw_only_present else "All guests"
+
     # --- Guest Loading ---
     async def set_excel_prize_file(self, files: List[rx.UploadFile]):
         if files and len(files) > 0:
@@ -884,9 +963,9 @@ class LuckyDrawState(rx.State):
             try:
                 from guest_management.services.excel_service_ranked import ExcelService
             except ImportError:
-                from guest_management.services.excel_service import ExcelService
 
-            service = ExcelService()
+
+                service = ExcelService()
 
             prizes = service.parse_prize_file(
                 self._prize_file_content
@@ -1263,8 +1342,8 @@ class LuckyDrawState(rx.State):
         ).strip()
 
     def _candidate_is_valid(
-        self,
-        candidate: Dict[str, Any],
+            self,
+            candidate: Dict[str, Any],
     ) -> bool:
         """Validate a candidate immediately before confirmation."""
 
@@ -1357,6 +1436,12 @@ class LuckyDrawState(rx.State):
         if not self.current_prizes:
             yield rx.toast.error("No valid prizes configured.")
             return
+
+        # Refresh immediately before opening the display so Company Dinner and
+        # Sports Day use the latest event-day attendance. Standalone Lucky Draw
+        # remains independent of check-in because initialize_lucky_draw_event()
+        # sets lucky_draw_only_present=False for that event type.
+        await self.load_lucky_draw_eligible_guests()
 
         if not self.lucky_draw_eligible_guests:
             yield rx.toast.error(
@@ -1691,8 +1776,8 @@ class LuckyDrawState(rx.State):
             return
 
         if not (
-            0 <= self.current_prize_index
-            < len(self.current_prizes)
+                0 <= self.current_prize_index
+                < len(self.current_prizes)
         ):
             yield rx.toast.error(
                 "Invalid prize selection."
@@ -1728,12 +1813,15 @@ class LuckyDrawState(rx.State):
                     "No eligible candidates remain."
                 )
 
+            # Run a short, visually engaging name-roll animation.
+            # The timing eases out so the roll starts quickly and slows
+            # naturally before revealing the final candidate.
             animation_count = min(
-                35,
-                max(10, len(candidates)),
+                30,
+                max(12, len(candidates)),
             )
 
-            for _ in range(animation_count):
+            for step in range(animation_count):
                 guest = random.choice(candidates)
 
                 self.lucky_draw_current_name = str(
@@ -1746,7 +1834,9 @@ class LuckyDrawState(rx.State):
 
                 yield
 
-                await asyncio.sleep(0.07)
+                progress = step / max(1, animation_count - 1)
+                delay = 0.04 + (0.20 * (progress ** 2))
+                await asyncio.sleep(delay)
 
             # IMPORTANT:
             # _select_candidate() is an async generator.
@@ -1982,8 +2072,8 @@ class LuckyDrawState(rx.State):
         self.draw_status = CONFIRMED
 
         if (
-            self.current_prize_index + 1
-            < len(self.current_prizes)
+                self.current_prize_index + 1
+                < len(self.current_prizes)
         ):
             self.waiting_for_next_prize = True
             self.draw_finished = False
@@ -2097,8 +2187,8 @@ class LuckyDrawState(rx.State):
             return
 
         if (
-            self.current_prize_index + 1
-            >= len(self.current_prizes)
+                self.current_prize_index + 1
+                >= len(self.current_prizes)
         ):
             self.draw_status = DONE
             self.draw_finished = True
@@ -2211,6 +2301,9 @@ class LuckyDrawState(rx.State):
             "lucky_draw_only_present": self.lucky_draw_only_present,
             "current_event_id": self.current_event_id,
             "current_event_name": self.lucky_draw_event_name,
+            "event_type": str(
+                (self.current_event or {}).get("event_type") or ""
+            ),
         }
         payload_json = json.dumps(
             display_payload,
@@ -2283,8 +2376,17 @@ class LuckyDrawState(rx.State):
                     ]
                     self.current_prize_index = int(data.get("current_prize_index", 0) or 0)
                     self.lucky_draw_excluded = str(data.get("lucky_draw_excluded", "") or "")
-                    self.lucky_draw_only_present = bool(data.get("lucky_draw_only_present", True))
-                    self.current_event_id = str(data.get("current_event_id", self.current_event_id) or self.current_event_id)
+                    event_type = str(data.get("event_type", "") or "").strip().lower()
+                    if event_type in EVENT_TYPES:
+                        self.lucky_draw_event_type = event_type
+                        if event_type == "lucky_draw":
+                            self.lucky_draw_only_present = False
+                    else:
+                        self.lucky_draw_only_present = bool(
+                            data.get("lucky_draw_only_present", self.lucky_draw_only_present)
+                        )
+                    self.current_event_id = str(
+                        data.get("current_event_id", self.current_event_id) or self.current_event_id)
                     self.lucky_draw_event_name = str(data.get("current_event_name", "") or "")
                     self.winners_list = [
                         dict(w) for w in data.get("winners", []) if isinstance(w, dict)
@@ -2323,7 +2425,7 @@ class LuckyDrawState(rx.State):
         self._prize_file_content = b""
         self._prize_filename = ""
         self.lucky_draw_excluded = ""
-        self.lucky_draw_only_present = True
+        self.lucky_draw_only_present = self.lucky_draw_event_type != "lucky_draw"
         self.lucky_draw_show_new_draw_dialog = False
         self.current_prizes = []
         self.current_prize_index = 0

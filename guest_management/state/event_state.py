@@ -68,36 +68,6 @@ class EventState(rx.State):
         return formatted
 
     @rx.var
-    def formatted_event_type(self) -> str:
-        """Get the display name for the selected event type."""
-        event_type = (
-            self.current_event.get("event_type")
-            if self.current_event
-            else self.event_type
-        ) or "company_dinner"
-
-        config = EVENT_TYPES.get(
-            event_type,
-            EVENT_TYPES["company_dinner"],
-        )
-        return config["name"]
-
-    @rx.var
-    def event_type_icon(self) -> str:
-        """Get the icon for the selected event type."""
-        event_type = (
-            self.current_event.get("event_type")
-            if self.current_event
-            else self.event_type
-        ) or "company_dinner"
-
-        config = EVENT_TYPES.get(
-            event_type,
-            EVENT_TYPES["company_dinner"],
-        )
-        return config["icon"]
-
-    @rx.var
     def event_config_name(self) -> str:
         """Get event type name."""
         event_type = (

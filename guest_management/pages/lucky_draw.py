@@ -1,415 +1,623 @@
-# pages/.py
+# guest_management/pages/lucky_draw.py
+"""Lucky Draw dashboard page."""
+
 import reflex as rx
-from guest_management.state import State, GuestState, UIState, LuckyDrawState, EventState
-from guest_management.utils.constants import GOLD, BLACK , DARK_GRAY
-from guest_management.components.lucky_draw_manager import lucky_draw_manager
+
+from ..state import LuckyDrawState
+from ..utils.constants import GOLD, BLACK, DARK_GRAY, LIGHT_GRAY
+from ..components import upload_dialog
+from ..components.lucky_draw_manager import lucky_draw_manager
 
 
-def render_winner_item(winner):
-    """Render a single winner item - Responsive"""
-    return rx.card(
+# -----------------------------------------------------------------------------
+# Small reusable UI helpers
+# -----------------------------------------------------------------------------
+
+
+def _stat_card(label, value, icon, *, background=BLACK):
+    """Render one compact dashboard statistic card."""
+    return rx.box(
         rx.hstack(
+            rx.icon(tag=icon, size=20, color=GOLD),
             rx.vstack(
-                rx.hstack(
-                    rx.icon(tag="crown", size=12, color=GOLD),
-                    rx.text(
-                        winner.get("name", "Unknown"),
-                        color=GOLD,
-                        weight="bold",
-                        font_size=["0.7rem", "0.8rem", "0.9rem"],
-                    ),
-                    spacing="1",
+                rx.text(
+                    label,
+                    color=LIGHT_GRAY,
+                    font_size="0.78rem",
+                    weight="medium",
                 ),
                 rx.text(
-                    f"ID: {winner.get('guest_id', 'Unknown')}",
-                    color="gray",
-                    font_size=["0.6rem", "0.7rem", "0.8rem"],
+                    value,
+                    color=GOLD,
+                    font_size=["1.45rem", "1.7rem"],
+                    weight="bold",
                 ),
-                rx.text(
-                    f"Prize: {winner.get('prize_name', '')}",
-                    color="white",
-                    font_size=["0.6rem", "0.7rem", "0.8rem"],
-                ),
-                spacing="1",
+                spacing="0",
                 align="start",
             ),
-            rx.spacer(),
-            rx.cond(
-                winner.get("formatted_date", ""),
-                rx.text(
-                    winner.get("formatted_date", ""),
-                    color="gray",
-                    font_size=["0.55rem", "0.65rem", "0.75rem"],
-                ),
-                rx.fragment(),
-            ),
-            spacing="2",
-            width="100%",
+            spacing="3",
+            align="center",
         ),
-        bg=BLACK,
-        padding="0.6em",
-        border_radius="8px",
+        background=background,
+        border="1px solid rgba(212, 175, 55, 0.25)",
+        border_radius="12px",
+        padding=["0.85em", "1em"],
         width="100%",
     )
 
 
-def clear_history_dialog():
-    """Confirmation dialog for clearing winners history"""
-    return rx.dialog.root(
-        rx.dialog.content(
-            rx.vstack(
-                rx.icon(tag="triangle_alert", size=40, color="red"),
-                rx.heading("Clear Winners History", size="5", color="red", font_size=["1.2em", "1.5em"]),
-                rx.text(
-                    "Are you sure you want to clear all winners history?",
-                    color="white",
-                    text_align="center",
-                    font_size=["0.8em", "0.9em"],
-                ),
-                rx.text(
-                    "This action cannot be undone.",
-                    color="gray",
-                    size="2",
-                    text_align="center",
-                    font_size=["0.7em", "0.8em"],
-                ),
-                rx.hstack(
-                    rx.button(
-                        "Cancel",
-                        on_click=LuckyDrawState.cancel_clear_winners,
-                        variant="outline",
-                        border_color=GOLD,
-                        color=GOLD,
-                        flex="1",
-                        size="2",
-                    ),
-                    rx.button(
-                        rx.hstack(
-                            rx.cond(
-                                UIState.is_loading,
-                                rx.spinner(size="2", color="white"),
-                                rx.icon(tag="trash-2", size=14),
-                            ),
-                            rx.text("Clear All", font_size=["0.8em", "0.9em"]),
-                        ),
-                        on_click=LuckyDrawState.confirm_clear_winners,
-                        bg="red.500",
-                        color="white",
-                        flex="1",
-                        is_loading=UIState.is_loading,
-                        size="2",
-                    ),
-                    spacing="3",
-                    width="100%",
-                ),
-                spacing="4",
-                padding="1.5em",
-                align="center",
-            ),
-            bg=DARK_GRAY,
-            border="2px solid red",
-            border_radius="15px",
-            max_width="400px",
-            width="90%",
+def _section_header(icon, title, description):
+    """Render a dashboard card header."""
+    return rx.hstack(
+        rx.box(
+            rx.icon(tag=icon, size=20, color=BLACK),
+            background=GOLD,
+            border_radius="10px",
+            padding="0.55em",
+            display="flex",
+            align_items="center",
+            justify_content="center",
         ),
-        open=UIState.show_clear_confirm,
+        rx.vstack(
+            rx.heading(
+                title,
+                size="4",
+                color="white",
+                margin="0",
+            ),
+            rx.text(
+                description,
+                color=LIGHT_GRAY,
+                font_size="0.78rem",
+            ),
+            spacing="0",
+            align="start",
+        ),
+        spacing="3",
+        align="center",
+        width="100%",
     )
 
 
-def new_draw_dialog():
-    """Dialog for setting up a new draw - Responsive"""
+def _guest_list_card():
+    """Show the participant source used by this event's Lucky Draw."""
+    return rx.card(
+        rx.vstack(
+            _section_header(
+                "users",
+                rx.cond(
+                    LuckyDrawState.lucky_draw_uses_attendance,
+                    "Event Guest List",
+                    "Participant List",
+                ),
+                LuckyDrawState.lucky_draw_source_label,
+            ),
+            rx.divider(),
+            rx.hstack(
+                rx.vstack(
+                    rx.text(
+                        LuckyDrawState.lucky_draw_eligible_count,
+                        color=GOLD,
+                        font_size=["2rem", "2.4rem"],
+                        weight="bold",
+                    ),
+                    rx.text(
+                        rx.cond(
+                            LuckyDrawState.lucky_draw_uses_attendance,
+                            "Checked-in guests eligible",
+                            "Participants eligible",
+                        ),
+                        color=LIGHT_GRAY,
+                        font_size="0.8rem",
+                    ),
+                    spacing="0",
+                    align="start",
+                ),
+                rx.spacer(),
+                rx.button(
+                    rx.hstack(
+                        rx.icon(tag="refresh-cw", size=16),
+                        rx.text("Refresh"),
+                        spacing="2",
+                    ),
+                    on_click=LuckyDrawState.load_lucky_draw_eligible_guests,
+                    variant="outline",
+                    border_color=GOLD,
+                    color=GOLD,
+                    size="2",
+                ),
+            ),
+            rx.cond(
+                LuckyDrawState.lucky_draw_uses_attendance,
+                rx.vstack(
+                    rx.text(
+                        "The same guest list is used for invitation emails. On event day, only guests who successfully check in are included in the Lucky Draw pool.",
+                        color=LIGHT_GRAY,
+                        font_size="0.72rem",
+                    ),
+                    rx.button(
+                        rx.hstack(
+                            rx.icon(tag="upload", size=15),
+                            rx.text("Manage Guest List"),
+                            spacing="2",
+                        ),
+                        on_click=rx.redirect(
+                            f"/dashboard/{LuckyDrawState.current_event_id}"
+                        ),
+                        bg=GOLD,
+                        color=BLACK,
+                        size="2",
+                        width="100%",
+                    ),
+                    spacing="2",
+                    width="100%",
+                ),
+                rx.vstack(
+                    rx.text(
+                        "Upload the participant file supplied by the client. No check-in is required for a standalone Lucky Draw.",
+                        color=LIGHT_GRAY,
+                        font_size="0.72rem",
+                    ),
+                    rx.button(
+                        rx.hstack(
+                            rx.icon(tag="upload", size=15),
+                            rx.text("Import Participant File"),
+                            spacing="2",
+                        ),
+                        on_click=LuckyDrawState.open_participant_import,
+                        bg=GOLD,
+                        color=BLACK,
+                        size="2",
+                        width="100%",
+                    ),
+                    spacing="2",
+                    width="100%",
+                ),
+            ),
+            spacing="4",
+            width="100%",
+        ),
+        background=DARK_GRAY,
+        border="1px solid rgba(212, 175, 55, 0.35)",
+        border_radius="14px",
+        padding=["1em", "1.25em"],
+        width="100%",
+    )
+
+
+def _prize_count():
+    """Return the count for the currently selected prize input mode."""
+    return rx.cond(
+        LuckyDrawState.prize_mode == "single",
+        rx.cond(
+            LuckyDrawState.single_prize_name != "",
+            1,
+            0,
+        ),
+        rx.cond(
+            LuckyDrawState.prize_mode == "multiple",
+            LuckyDrawState.multiple_prizes_list.length(),
+            LuckyDrawState.excel_prizes_list.length(),
+        ),
+    )
+
+
+def _prize_list_card():
+    """Prize configuration summary with the existing Excel import path."""
+    return rx.card(
+        rx.vstack(
+            _section_header(
+                "gift",
+                "Prize List",
+                "Add the prizes that will be awarded during the draw.",
+            ),
+            rx.divider(),
+            rx.hstack(
+                rx.vstack(
+                    rx.text(
+                        _prize_count(),
+                        color=GOLD,
+                        font_size=["2rem", "2.4rem"],
+                        weight="bold",
+                    ),
+                    rx.text(
+                        "Prizes configured",
+                        color=LIGHT_GRAY,
+                        font_size="0.8rem",
+                    ),
+                    spacing="0",
+                    align="start",
+                ),
+                rx.spacer(),
+                rx.upload(
+                    rx.button(
+                        rx.hstack(
+                            rx.icon(tag="file-spreadsheet", size=16),
+                            rx.text("Upload Prize Excel"),
+                            spacing="2",
+                        ),
+                        bg=GOLD,
+                        color=BLACK,
+                        size="2",
+                    ),
+                    id="lucky_draw_prize_excel_upload",
+                    multiple=False,
+                    accept={
+                        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        ".xls": "application/vnd.ms-excel",
+                        ".csv": "text/csv",
+                    },
+                    max_files=1,
+                    on_drop=LuckyDrawState.set_excel_prize_file,
+                ),
+            ),
+            rx.cond(
+                LuckyDrawState.prize_selected_file_name != "",
+                rx.hstack(
+                    rx.icon(tag="file-text", size=14, color=GOLD),
+                    rx.text(
+                        LuckyDrawState.prize_selected_file_name,
+                        color=GOLD,
+                        font_size="0.78rem",
+                        flex="1",
+                    ),
+                    rx.button(
+                        "Import Prizes",
+                        on_click=LuckyDrawState.process_excel_prize_upload,
+                        bg=GOLD,
+                        color=BLACK,
+                        size="1",
+                        is_loading=LuckyDrawState.is_loading,
+                    ),
+                    width="100%",
+                    align="center",
+                    spacing="2",
+                    background=f"{GOLD}15",
+                    border_radius="8px",
+                    padding="0.6em",
+                ),
+                rx.text(
+                    "Excel columns: Name (required), Value (optional), Image URL (optional).",
+                    color="gray",
+                    font_size="0.72rem",
+                ),
+            ),
+            rx.text(
+                "For single or manually entered prizes, use the advanced prize configuration below.",
+                color="gray",
+                font_size="0.72rem",
+            ),
+            spacing="4",
+            width="100%",
+        ),
+        background=DARK_GRAY,
+        border="1px solid rgba(212, 175, 55, 0.35)",
+        border_radius="14px",
+        padding=["1em", "1.25em"],
+        width="100%",
+    )
+
+
+def _winner_history():
+    """Compact recent-winners section."""
+    return rx.cond(
+        LuckyDrawState.winners_list.length() > 0,
+        rx.card(
+            rx.vstack(
+                rx.hstack(
+                    rx.hstack(
+                        rx.icon(tag="crown", size=17, color=GOLD),
+                        rx.heading("Recent Winners", size="3", color="white"),
+                        spacing="2",
+                    ),
+                    rx.spacer(),
+                    rx.button(
+                        rx.hstack(
+                            rx.icon(tag="download", size=13),
+                            rx.text("Export"),
+                            spacing="1",
+                        ),
+                        on_click=LuckyDrawState.download_winner_list,
+                        variant="outline",
+                        border_color=GOLD,
+                        color=GOLD,
+                        size="1",
+                    ),
+                    rx.button(
+                        rx.hstack(
+                            rx.icon(tag="trash-2", size=13),
+                            rx.text("Clear"),
+                            spacing="1",
+                        ),
+                        on_click=LuckyDrawState.clear_winners_history,
+                        variant="outline",
+                        border_color="red.500",
+                        color="red.500",
+                        size="1",
+                    ),
+                    width="100%",
+                    align="center",
+                    wrap="wrap",
+                ),
+                rx.vstack(
+                    rx.foreach(
+                        LuckyDrawState.winners_list[:10],
+                        lambda winner: rx.hstack(
+                            rx.icon(tag="crown", size=13, color=GOLD),
+                            rx.text(
+                                winner.get("name", "Unknown"),
+                                color="white",
+                                weight="bold",
+                                font_size="0.8rem",
+                            ),
+                            rx.spacer(),
+                            rx.text(
+                                winner.get("prize_name", ""),
+                                color=GOLD,
+                                font_size="0.75rem",
+                            ),
+                            width="100%",
+                            padding="0.45em 0.6em",
+                            background=BLACK,
+                            border_radius="7px",
+                        ),
+                    ),
+                    width="100%",
+                    max_height="220px",
+                    overflow="auto",
+                    spacing="2",
+                ),
+                spacing="3",
+                width="100%",
+            ),
+            background=DARK_GRAY,
+            border="1px solid rgba(212, 175, 55, 0.25)",
+            border_radius="14px",
+            padding="1em",
+            width="100%",
+        ),
+        rx.fragment(),
+    )
+
+
+def _prize_configuration_dialog():
+    """Render the existing prize manager in a dedicated configuration dialog."""
     return rx.dialog.root(
         rx.dialog.content(
             rx.vstack(
                 rx.hstack(
-                    rx.icon(tag="gift", size=24, color=GOLD),
-                    rx.heading("New Lucky Draw", size="5", color=GOLD, font_size=["1.3em", "1.5em"]),
+                    rx.icon(tag="gift", size=22, color=GOLD),
+                    rx.heading("Prize Configuration", size="5", color=GOLD),
                     spacing="2",
                 ),
                 rx.divider(),
                 lucky_draw_manager(),
-                rx.divider(),
-                # Guest Filter Section
-                rx.hstack(
-                    rx.switch(
-                        checked=LuckyDrawState.lucky_draw_only_present,
-                        on_change=LuckyDrawState.set_lucky_draw_only_present,
-                        color_scheme="gold",
-                    ),
-                    rx.cond(
-                        LuckyDrawState.lucky_draw_only_present,
-                        rx.text("Only include guests who have checked in", color="red", font_size=["0.7em", "0.8em"]),
-                        rx.text("Include all guests", color="gray", font_size=["0.7em", "0.8em"]),
-                    ),
-                    spacing="2",
-                    wrap="wrap",
-                ),
-                # Exclude Guests Input
-                rx.vstack(
-                    rx.hstack(
-                        rx.icon(tag="user-x", size=14, color="red"),
-                        rx.text("Exclude Guests (comma-separated names or IDs)", color="white", font_size=["0.7em", "0.8em"]),
-                        spacing="2",
-                    ),
-                    rx.input(
-                        placeholder="e.g., John Doe, Jane Smith, GUEST_001",
-                        value=LuckyDrawState.lucky_draw_excluded,
-                        on_change=LuckyDrawState.set_lucky_draw_excluded,
-                        width="100%",
-                        bg=BLACK,
-                        border_color="red",
-                        color="white",
-                        size="2",
-                    ),
-                    width="100%",
-                ),
-                # Eligible Count Preview
-                rx.hstack(
-                    rx.icon(tag="users", size=16, color=GOLD),
-                    rx.text("Eligible Guests:", color="white", font_size=["0.8em", "0.9em"]),
-                    rx.badge(
-                        LuckyDrawState.lucky_draw_eligible_count,
-                        color_scheme="gold",
-                        size="2",
-                    ),
-                    spacing="2",
-                ),
-                rx.divider(),
                 rx.hstack(
                     rx.button(
-                        "Cancel",
+                        "Close",
                         on_click=LuckyDrawState.close_new_draw_dialog,
                         variant="outline",
                         border_color=GOLD,
                         color=GOLD,
                         flex="1",
-                        size="2",
                     ),
-                    rx.button(
-                        rx.hstack(rx.icon(tag="play", size=14), rx.text("Start New Draw", font_size=["0.8em", "0.9em"])),
-                        on_click=LuckyDrawState.start_new_draw,
-                        bg=GOLD,
-                        color=BLACK,
-                        flex="2",
-                        size="2",
-                    ),
-                    spacing="3",
+                    spacing="2",
                     width="100%",
                 ),
                 spacing="4",
-                padding="1.5em",
+                padding="1.2em",
                 width="100%",
             ),
-            bg=DARK_GRAY,
+            background=DARK_GRAY,
             border=f"2px solid {GOLD}",
             border_radius="15px",
-            max_width="700px",
+            max_width="760px",
             width="95%",
         ),
         open=LuckyDrawState.lucky_draw_show_new_draw_dialog,
     )
 
 
-def lucky_draw_page():
-    """Lucky draw page with spinning wheel animation - Fully Responsive"""
-    return rx.center(
+def _advanced_prize_setup():
+    """Keep the existing prize manager available without making it the main UI."""
+    return rx.card(
         rx.vstack(
-            # Header
             rx.hstack(
-                rx.icon(tag="gift", size=30, color=GOLD),
-                rx.heading("Lucky Draw", size="7", color=GOLD, font_size=["1.8em", "2.2em", "2.5em"]),
-                spacing="3",
-            ),
-
-            # Prize Setup Card
-            rx.card(
-                rx.vstack(
-                    rx.hstack(
-                        rx.icon(tag="settings", size=20, color=GOLD),
-                        rx.heading("Prize Setup", size="4", color=GOLD, font_size=["1.1em", "1.3em"]),
-                        spacing="2",
-                    ),
-                    lucky_draw_manager(),
-                    spacing="4",
-                    width="100%",
-                ),
-                bg=DARK_GRAY,
-                border=f"1px solid {GOLD}",
-                padding="1em",
+                rx.icon(tag="settings", size=17, color=GOLD),
+                rx.heading("Advanced Prize Configuration", size="3", color="white"),
+                spacing="2",
                 width="100%",
             ),
+            rx.text(
+                "Use the existing prize manager for single prizes or manual multiple-prize entry.",
+                color=LIGHT_GRAY,
+                font_size="0.75rem",
+            ),
+            rx.button(
+                rx.hstack(
+                    rx.icon(tag="settings", size=14),
+                    rx.text("Open Prize Configuration"),
+                    spacing="2",
+                ),
+                on_click=LuckyDrawState.open_new_draw_dialog,
+                variant="outline",
+                border_color=GOLD,
+                color=GOLD,
+                width="100%",
+            ),
+            spacing="3",
+            width="100%",
+        ),
+        background=DARK_GRAY,
+        border="1px solid rgba(212, 175, 55, 0.2)",
+        border_radius="14px",
+        padding="1em",
+        width="100%",
+    )
 
-            # Guest Selection Card
-            rx.card(
-                rx.vstack(
-                    rx.hstack(
-                        rx.icon(tag="users", size=20, color=GOLD),
-                        rx.heading("Guest Selection", size="4", color=GOLD, font_size=["1.1em", "1.3em"]),
-                        spacing="2",
-                    ),
-                    # Guest Filter Toggle
-                    rx.hstack(
-                        rx.switch(
-                            checked=LuckyDrawState.lucky_draw_only_present,
-                            on_change=LuckyDrawState.set_lucky_draw_only_present,
-                            color_scheme="gold",
-                        ),
-                        rx.cond(
-                            LuckyDrawState.lucky_draw_only_present,
-                            rx.text("Only include guests who have checked in", color=GOLD, font_size=["0.7em", "0.8em"]),
-                            rx.text("Include all guests", color="gray", font_size=["0.7em", "0.8em"]),
-                        ),
-                        spacing="2",
-                        wrap="wrap",
-                    ),
-                    # Exclude Guests Input
+
+def lucky_draw_page():
+    """Lucky Draw administration dashboard."""
+    return rx.box(
+        rx.container(
+            rx.vstack(
+                # Header ------------------------------------------------------
+                rx.hstack(
                     rx.vstack(
                         rx.hstack(
-                            rx.icon(tag="user-x", size=14, color=GOLD),
-                            rx.text("Exclude Guests (comma-separated names or IDs)", color="white", font_size=["0.7em", "0.8em"]),
+                            rx.icon(tag="gift", size=25, color=GOLD),
+                            rx.heading(
+                                "Lucky Draw Dashboard",
+                                size="7",
+                                color="white",
+                                font_size=["1.55rem", "2rem", "2.35rem"],
+                            ),
+                            spacing="3",
+                        ),
+                        rx.hstack(
+                            rx.text(
+                                LuckyDrawState.lucky_draw_event_name,
+                                color=LIGHT_GRAY,
+                                font_size=["0.82rem", "0.9rem", "1rem"],
+                            ),
+                            rx.badge(
+                                rx.cond(
+                                    LuckyDrawState.lucky_draw_uses_attendance,
+                                    "ATTENDANCE LINKED",
+                                    "NO CHECK-IN",
+                                ),
+                                color_scheme="green",
+                                variant="soft",
+                                size="1",
+                            ),
                             spacing="2",
                         ),
-                        rx.input(
-                            placeholder="e.g., John Doe, Jane Smith, GUEST_001",
-                            value=LuckyDrawState.lucky_draw_excluded,
-                            on_change=LuckyDrawState.set_lucky_draw_excluded,
-                            width="100%",
-                            bg=BLACK,
-                            border_color="red",
-                            color="white",
-                            size="2",
-                        ),
-                        width="100%",
+                        spacing="1",
+                        align="start",
                     ),
-                    # Eligible Count
-                    rx.hstack(
-                        rx.icon(tag="users", size=16, color=GOLD),
-                        rx.text("Eligible Guests:", color="white", font_size=["0.8em", "0.9em"]),
-                        rx.badge(
-                            LuckyDrawState.lucky_draw_eligible_count,
-                            color_scheme="gold",
-                            size="2",
+                    rx.spacer(),
+                    rx.button(
+                        rx.hstack(
+                            rx.icon(tag="arrow-left", size=14),
+                            rx.text("Back to Event"),
+                            spacing="2",
                         ),
-                        spacing="2",
+                        on_click=rx.redirect(
+                            f"/dashboard/{LuckyDrawState.current_event_id}"
+                        ),
+                        variant="outline",
+                        border_color=GOLD,
+                        color=GOLD,
+                        size="2",
                     ),
+                    width="100%",
+                    align="center",
+                    wrap="wrap",
+                ),
+
+                # Setup cards -------------------------------------------------
+                rx.grid(
+                    _guest_list_card(),
+                    _prize_list_card(),
+                    columns=["1fr", "1fr"],
                     spacing="4",
                     width="100%",
                 ),
-                bg=DARK_GRAY,
-                border=f"1px solid {GOLD}",
-                padding="1em",
-                width="100%",
-            ),
 
-            # Action Buttons
-            rx.vstack(
-                # Set Up Complete Button - Opens display page
-                rx.button(
-                    rx.hstack(
-                        rx.icon(tag="circle_check", size=16),
-                        rx.text("✓ Set Up Complete - Open Display Screen", font_size=["0.8em", "0.9em", "1em"]),
+                # Statistics --------------------------------------------------
+                rx.grid(
+                    _stat_card(
+                        "Guests",
+                        LuckyDrawState.lucky_draw_eligible_count,
+                        "users",
+                        background="#FFF8D9",
                     ),
-                    on_click=LuckyDrawState.setup_complete_and_go_to_display,
-                    bg=GOLD,
-                    color=BLACK,
+                    _stat_card(
+                        "Prizes",
+                        _prize_count(),
+                        "gift",
+                        background="#F4F4F4",
+                    ),
+                    _stat_card(
+                        "Winners",
+                        LuckyDrawState.winners_list.length(),
+                        "crown",
+                        background="#E8F6EA",
+                    ),
+                    columns=["1fr", "1fr", "1fr"],
+                    spacing="4",
                     width="100%",
-                    size="3",
-                    padding="1em",
-                    _hover={"bg": "#FFD700", "transform": "scale(1.02)"},
                 ),
-                rx.text(
-                    "Click this when ready to project to attendees. This will open the display screen.",
-                    color="gray",
-                    font_size=["0.65em", "0.75em"],
-                    text_align="center",
-                ),
-                rx.divider(),
-                rx.button(
-                    rx.hstack(rx.icon(tag="arrow-left", size=14), rx.text("Back to Dashboard", font_size=["0.8em", "0.9em"])),
-                    on_click=rx.redirect(f"/dashboard/{EventState.current_event_id}"),
-                    variant="outline",
-                    border_color=GOLD,
-                    color=GOLD,
-                    width="100%",
-                    padding="0.8em",
-                    _hover={"bg": GOLD, "color": BLACK},
-                ),
-                spacing="3",
-                width="100%",
-            ),
 
-            # Winners History
-            rx.cond(
-                LuckyDrawState.winners_list.length() > 0,
+                # Main action -------------------------------------------------
                 rx.card(
                     rx.vstack(
-                        rx.hstack(
+                        rx.heading(
+                            "Ready to Start?",
+                            size="5",
+                            color="white",
+                        ),
+                        rx.cond(
+                            LuckyDrawState.lucky_draw_uses_attendance,
+                            rx.text(
+                                "The display will use the latest checked-in attendance from this event. The invitation guest list remains the source of participant records.",
+                                color=LIGHT_GRAY,
+                                text_align="center",
+                                font_size="0.82rem",
+                            ),
+                            rx.text(
+                                "The display will use the complete client-supplied participant list. No event-day check-in is required.",
+                                color=LIGHT_GRAY,
+                                text_align="center",
+                                font_size="0.82rem",
+                            ),
+                        ),
+                        rx.button(
                             rx.hstack(
-                                rx.icon(tag="history", size=16, color=GOLD),
-                                rx.heading("Recent Winners", size="3", color="white", font_size=["1em", "1.2em"]),
+                                rx.icon(tag="monitor", size=19),
+                                rx.text("START DISPLAY SCREEN"),
                                 spacing="2",
                             ),
-                            rx.spacer(),
-                            rx.button(
-                                rx.hstack(
-                                    rx.icon(tag="download", size=12),
-                                    rx.text("Export", font_size=["0.7em", "0.8em"]),
-                                ),
-                                on_click=LuckyDrawState.download_winner_list,
-                                size="2",
-                                variant="outline",
-                                border_color=GOLD,
-                                color=GOLD,
-                                _hover={"bg": GOLD, "color": BLACK},
-                            ),
-                            rx.button(
-                                rx.hstack(
-                                    rx.icon(tag="trash-2", size=12),
-                                    rx.text("Clear History", font_size=["0.7em", "0.8em"]),
-                                ),
-                                on_click=LuckyDrawState.clear_winners_history,
-                                size="2",
-                                variant="outline",
-                                border_color="red.500",
-                                color="red.500",
-                                _hover={"bg": "red.500", "color": "white"},
-                            ),
-                            spacing="2",
+                            on_click=LuckyDrawState.setup_complete_and_go_to_display,
+                            bg=GOLD,
+                            color=BLACK,
                             width="100%",
-                            wrap="wrap",
+                            size="3",
+                            padding="1em",
+                            _hover={
+                                "transform": "translateY(-1px)",
+                            },
                         ),
-                        rx.vstack(
-                            rx.foreach(
-                                LuckyDrawState.winners_list[:10],
-                                lambda winner: render_winner_item(winner),
-                            ),
-                            width="100%",
-                            max_height="250px",
-                            overflow="auto",
-                            spacing="2",
-                        ),
-                        spacing="2",
+                        spacing="3",
                         width="100%",
+                        align="center",
                     ),
-                    bg=DARK_GRAY,
+                    background=DARK_GRAY,
                     border=f"1px solid {GOLD}",
-                    padding="0.8em",
+                    border_radius="14px",
+                    padding=["1em", "1.4em"],
                     width="100%",
                 ),
-                rx.fragment(),
+
+                _advanced_prize_setup(),
+                _winner_history(),
+                _prize_configuration_dialog(),
+
+                # Existing guest upload dialog remains available through the
+                # normal event dashboard and is rendered here so its state is
+                # not lost if this page is later used as the upload entry point.
+                upload_dialog.upload_dialog(),
+
+                spacing="5",
+                width="100%",
+                max_width="1200px",
+                padding=["1em", "1.5em", "2em"],
             ),
-
-            # Dialogs
-            clear_history_dialog(),
-            new_draw_dialog(),
-
-            spacing="6",
             width="100%",
-            padding=["1em", "1.5em", "2em"],
             max_width="1200px",
         ),
         width="100%",
         min_height="100vh",
-        bg=BLACK,
-        padding="0.5em",
+        background=BLACK,
+        padding="12px",
     )

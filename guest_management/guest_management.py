@@ -112,9 +112,13 @@ app.add_page(stall_menu.stall_menu, route="/stall/menu", on_load=[VoucherState.s
 # Lucky draw
 app.add_page(
     lucky_draw.lucky_draw_page,
-    route="/lucky-draw",
-    on_load=[AuthState.check_auth, GuestState.load_guests, GuestState.load_lucky_draw_eligible_guests, GuestState.load_winners],
-    title="Lucky Draw"
+    route="/lucky-draw/[event_id]",
+    on_load=[
+        AuthState.check_auth,
+        LuckyDrawState.initialize_lucky_draw_event,
+        LuckyDrawState.load_winners,
+    ],
+    title="Lucky Draw Dashboard",
 )
 
 app.add_page(rx.fragment(), route="/checkin-handler", on_load=ScannerState.handle_scan)
@@ -128,8 +132,11 @@ app.add_page(select_event_type.select_event_type_page, route="/select-event-type
 app.add_page(
     lucky_draw_display.lucky_draw_display_page,
     route="/lucky-draw-display",
+    on_load=[
+        AuthState.check_auth,
+        LuckyDrawState.load_lucky_draw_display_data,
+    ],
     title="Lucky Draw Display",
-    on_load=LuckyDrawState.load_lucky_draw_display_data,
 )
 
 app.add_page(about.about_page, route="/about", title="About - EventLah")
