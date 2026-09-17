@@ -7,15 +7,13 @@ import mimetypes
 import logging
 
 from typing import Any, Dict, List, Optional
-
+from guest_management.services.auth_service import AuthService
 from guest_management.core.exceptions import (
     AuthorizationError,
     DatabaseError,
     EventNotFoundError,
 )
-from guest_management.services.google_drive_asset_service import (
-    GoogleDriveAssetService,
-)
+from guest_management.services.storage_service import StorageService
 from guest_management.repositories import (
     EventRepository,
     GuestRepository,
@@ -29,7 +27,7 @@ class EventService:
             self,
             repository: Optional[EventRepository] = None,
             guest_repository: Optional[GuestRepository] = None,
-            drive_service: Optional[GoogleDriveAssetService] = None,
+            storage_service: Optional[StorageService] = None,
     ):
         self.repo = (
                 repository
@@ -41,10 +39,10 @@ class EventService:
                 or GuestRepository()
         )
 
-        # Drive service is injected by callers that have a user context.
-        # Do not create GoogleDriveAssetService() here because database
+        # Storage service is injected by callers when needed.
+        # Keep infrastructure dependencies provider-independent.
         # OAuth requires the authenticated user's ID.
-        self.drive_service = drive_service
+        self.storage_service = storage_service or StorageService()
 
     @staticmethod
     def _decode_image_data_url(
@@ -108,36 +106,48 @@ class EventService:
     # ==================================================================
 
     def get_user_events(
-        self,
-        user_id: str,
+            self,
+            user_id: str,
+            user: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """Return events owned by the authenticated user."""
+        """Return events accessible to the authenticated user."""
 
         if not user_id:
             raise AuthorizationError(
                 "Authenticated user required"
             )
 
-        return self.repo.get_by_user(
-            user_id
-        )
+        from guest_management.services.auth_service import AuthService
+
+        if AuthService.can_manage_events(user):
+            return self.repo.get_all()
+
+        return self.repo.get_by_user(user_id)
 
     def get_event(
-        self,
-        event_id: int,
-        user_id: str,
+            self,
+            event_id: int,
+            user_id: str,
+            user: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Return one event belonging to the user."""
+        """Return an event accessible to the authenticated user."""
 
         if not user_id:
             raise AuthorizationError(
                 "Authenticated user required"
             )
 
-        event = self.repo.get_by_id(
-            int(event_id),
-            user_id,
-        )
+        from guest_management.services.auth_service import AuthService
+
+        if AuthService.can_manage_events(user):
+            event = self.repo.get_by_id_any(
+                int(event_id)
+            )
+        else:
+            event = self.repo.get_by_id(
+                int(event_id),
+                user_id,
+            )
 
         if not event:
             raise EventNotFoundError(
@@ -166,55 +176,37 @@ class EventService:
     # ==================================================================
     # CREATE
     # ==================================================================
-    def set_event_drive_folder(
-        self,
-        event_id: int,
-        folder_id: str,
-    ) -> Dict[str, Any]:
-        """Store the Google Drive folder ID for an event."""
-
-        if not folder_id:
-            raise ValueError("Google Drive folder ID is required")
-
-        updated = self.repo.update(
-            int(event_id),
-            {
-                "event_drive_folder_id": folder_id,
-            },
-        )
-
-        if not updated:
-            raise DatabaseError(
-                f"Unable to update event {event_id} with Google Drive folder"
-            )
-
-        return updated
 
     def create_event(
         self,
         event_data: Dict[str, Any],
         user_id: str,
+        user: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Create an event and provision its Google Drive assets.
+        Create an event and provision its storage assets
 
         Flow:
 
             1. Validate authenticated user.
             2. Create the event in the database.
-            3. Create a dedicated Google Drive folder.
-            4. Save the Drive folder ID.
+            3. Upload event assets to Supabase Storage.
+            4. Save the Storage asset paths.
             5. Upload event logo when provided.
             6. Upload wedding invitation when provided.
-            7. Save Drive asset metadata.
+            7. Save Supabase Storage asset metadata.
 
-        If a Drive operation fails after the database event is created,
+        If a Storage operation fails after the database event is created,
         the event remains valid and the failure is logged.
         """
 
         if not user_id:
             raise AuthorizationError(
                 "Authenticated user required"
+            )
+        if not AuthService.can_manage_events(user):
+            raise AuthorizationError(
+                "User is not authorized to create events"
             )
 
         data = dict(event_data)
@@ -225,18 +217,20 @@ class EventService:
         data.setdefault("present_count", 0)
 
         # --------------------------------------------------------------
-        # Drive asset metadata defaults
+        # Supabase Storage asset metadata defaults
         # --------------------------------------------------------------
 
-        data.setdefault("logo_drive_file_id", "")
+        data.setdefault("logo_storage_path", "")
         data.setdefault("logo_filename", "")
         data.setdefault("logo_mime_type", "")
 
-        data.setdefault("invitation_drive_file_id", "")
+        data.setdefault("invitation_storage_path", "")
         data.setdefault("invitation_filename", "")
         data.setdefault("invitation_mime_type", "")
 
-        data.setdefault("event_drive_folder_id", "")
+        data.setdefault("guest_list_storage_path", "")
+        data.setdefault("guest_list_filename", "")
+        data.setdefault("guest_list_mime_type", "")
 
         # --------------------------------------------------------------
         # Extract uploaded images before database insert
@@ -249,8 +243,10 @@ class EventService:
         )
 
         # Keep the database's legacy image fields empty.
-        data["logo"] = None
-        data["wedding_invitation"] = None
+        # These columns are NOT NULL; actual uploaded files are stored
+        # in Supabase Storage and referenced by the *_storage_path fields.
+        data["logo"] = ""
+        data["wedding_invitation"] = ""
 
         # --------------------------------------------------------------
         # 1. Create event in database
@@ -265,54 +261,13 @@ class EventService:
 
         event_id = int(event["id"])
 
-        # --------------------------------------------------------------
-        # 2. Create dedicated Google Drive folder
-        # --------------------------------------------------------------
-
-        try:
-            event_name = (
-                str(event.get("name") or "Event")
-                .strip()
-            )
-
-            drive_asset = (
-                self.drive_service.create_event_folder(
-                    event_name
-                )
-            )
-
-            # ----------------------------------------------------------
-            # 3. Save Drive folder ID
-            # ----------------------------------------------------------
-
-            event = self.set_event_drive_folder(
-                event_id,
-                drive_asset.file_id,
-            )
-
-        except Exception:
-            import logging
-
-            logger.exception(
-                "Failed to create Google Drive folder for event %s",
-                event_id,
-            )
-
-            return event
-
-        event_folder_id = event.get(
-            "event_drive_folder_id"
-        )
-
-        if not event_folder_id:
-            logger.error(
-                "Event %s has no Google Drive folder ID",
-                event_id,
-            )
-            return event
 
         # --------------------------------------------------------------
         # 4. Upload event logo
+        # --------------------------------------------------------------
+
+        # --------------------------------------------------------------
+        # 2. Upload event logo to Supabase Storage
         # --------------------------------------------------------------
 
         if logo_data_url:
@@ -326,40 +281,36 @@ class EventService:
                     f"event_{event_id}_logo",
                 )
 
-                logo_asset = (
-                    self.drive_service.upload_event_logo(
-                        logo_bytes,
-                        logo_filename,
-                        logo_mime_type,
-                        folder_id=event_folder_id,
-                    )
+                logo_asset = self.storage_service.upload(
+                    event_id=event_id,
+                    asset_type="logo",
+                    content=logo_bytes,
+                    filename=logo_filename,
+                    mime_type=logo_mime_type,
+                    upsert=True,
                 )
 
                 event = self.repo.update(
                     event_id,
                     {
-                        "logo_drive_file_id": (
-                            logo_asset.file_id
-                        ),
-                        "logo_filename": (
-                            logo_asset.filename
-                        ),
-                        "logo_mime_type": (
-                            logo_asset.mime_type
-                        ),
+                        "logo_storage_path": logo_asset.path,
+                        "logo_filename": logo_asset.filename,
+                        "logo_mime_type": logo_asset.mime_type,
                     },
                 )
 
             except Exception:
-                import logging
-
-                logging.getLogger(__name__).exception(
+                logger.exception(
                     "Failed to upload logo for event %s",
                     event_id,
                 )
 
         # --------------------------------------------------------------
         # 5. Upload wedding invitation
+        # --------------------------------------------------------------
+
+        # --------------------------------------------------------------
+        # 3. Upload wedding invitation to Supabase Storage
         # --------------------------------------------------------------
 
         if invitation_data_url:
@@ -373,34 +324,26 @@ class EventService:
                     f"event_{event_id}_invitation",
                 )
 
-                invitation_asset = (
-                    self.drive_service.upload_event_invitation(
-                        invitation_bytes,
-                        invitation_filename,
-                        invitation_mime_type,
-                        event_folder_id=event_folder_id,
-                    )
+                invitation_asset = self.storage_service.upload(
+                    event_id=event_id,
+                    asset_type="invitation",
+                    content=invitation_bytes,
+                    filename=invitation_filename,
+                    mime_type=invitation_mime_type,
+                    upsert=True,
                 )
 
                 event = self.repo.update(
                     event_id,
                     {
-                        "invitation_drive_file_id": (
-                            invitation_asset.file_id
-                        ),
-                        "invitation_filename": (
-                            invitation_asset.filename
-                        ),
-                        "invitation_mime_type": (
-                            invitation_asset.mime_type
-                        ),
+                        "invitation_storage_path": invitation_asset.path,
+                        "invitation_filename": invitation_asset.filename,
+                        "invitation_mime_type": invitation_asset.mime_type,
                     },
                 )
 
             except Exception:
-                import logging
-
-                logging.getLogger(__name__).exception(
+                logger.exception(
                     "Failed to upload invitation for event %s",
                     event_id,
                 )
@@ -419,22 +362,26 @@ class EventService:
     # ==================================================================
 
     def update_event(
-        self,
-        event_id: int,
-        user_id: str,
-        updates: Dict[str, Any],
+            self,
+            event_id: int,
+            user_id: str,
+            updates: Dict[str, Any],
+            user: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Update an event owned by the user."""
+        """Update an event accessible to the authenticated user."""
 
         if not user_id:
-            raise AuthorizationError(
-                "Authenticated user required"
-            )
+            raise AuthorizationError("Authenticated user required")
 
-        existing = self.repo.get_by_id(
-            int(event_id),
-            user_id,
-        )
+        if AuthService.can_manage_events(user):
+            existing = self.repo.get_by_id_any(
+                int(event_id)
+            )
+        else:
+            existing = self.repo.get_by_id(
+                int(event_id),
+                user_id,
+            )
 
         if not existing:
             raise EventNotFoundError(
@@ -447,12 +394,9 @@ class EventService:
         )
 
         if not result:
-            raise DatabaseError(
-                "Failed to update event"
-            )
+            raise DatabaseError("Failed to update event")
 
         return result
-
     # ==================================================================
     # DELETE
     # ==================================================================
@@ -461,32 +405,43 @@ class EventService:
             self,
             event_id: int,
             user_id: str,
+            user: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Delete an event and its Google Drive folder."""
+        """Delete an event and its Supabase Storage assets."""
 
         if not user_id:
             raise AuthorizationError(
                 "Authenticated user required"
             )
 
+
+
         # --------------------------------------------------------------
-        # 1. Verify ownership and capture Drive folder ID BEFORE delete
+        # 1. Verify ownership and capture Storage paths BEFORE delete
         # --------------------------------------------------------------
 
-        event = self.repo.get_by_id(
-            int(event_id),
-            user_id,
-        )
+        from guest_management.services.auth_service import AuthService
+
+        if AuthService.can_manage_events(user):
+            event = self.repo.get_by_id_any(
+                int(event_id)
+            )
+        else:
+            event = self.repo.get_by_id(
+                int(event_id),
+                user_id,
+            )
 
         if not event:
             raise AuthorizationError(
                 "Event not found or access denied"
             )
 
-        drive_folder_id = (
-                event.get("event_drive_folder_id")
-                or ""
-        )
+        storage_paths = [
+            event.get("logo_storage_path") or "",
+            event.get("invitation_storage_path") or "",
+            event.get("guest_list_storage_path") or "",
+        ]
 
         # --------------------------------------------------------------
         # 2. Delete database event
@@ -500,72 +455,34 @@ class EventService:
             return False
 
         # --------------------------------------------------------------
-        # 3. Delete/trash Google Drive event folder
+        # 3. Delete Supabase Storage assets
         # --------------------------------------------------------------
 
-        if drive_folder_id:
+        for storage_path in storage_paths:
+            if not storage_path:
+                continue
+
             try:
-                self.drive_service.delete_file(
-                    drive_folder_id
+                self.storage_service.delete(
+                    storage_path
                 )
 
                 logging.getLogger(__name__).info(
-                    "Deleted Google Drive folder for event %s: %s",
+                    "Deleted Supabase Storage asset for event %s: %s",
                     event_id,
-                    drive_folder_id,
+                    storage_path,
                 )
 
             except Exception:
                 # Database deletion succeeded.
                 # Do not report the whole operation as failed merely
-                # because Drive cleanup failed.
+                # because Storage cleanup failed.
                 logging.getLogger(__name__).exception(
-                    "Database event %s deleted, but Google Drive "
-                    "folder cleanup failed: %s",
+                    "Database event %s deleted, but Supabase "
+                    "Storage asset cleanup failed: %s",
                     event_id,
-                    drive_folder_id,
+                    storage_path,
                 )
 
         return True
 
-    # ==================================================================
-    # COUNTS
-    # ==================================================================
-
-    def update_event_counts(
-        self,
-        event_id: int,
-    ) -> None:
-        """Refresh cached event guest counts."""
-
-        total = (
-            self.guest_repo.count_by_event(
-                int(event_id)
-            )
-        )
-
-        present = (
-            self.guest_repo.count_present(
-                int(event_id)
-            )
-        )
-
-        self.repo.update_counts(
-            int(event_id),
-            total,
-            present,
-        )
-
-    # ==================================================================
-    # EVENT TYPE
-    # ==================================================================
-
-    def get_event_type(
-        self,
-        event_id: int,
-    ) -> Optional[str]:
-        """Return the event type."""
-
-        return self.repo.get_event_type(
-            int(event_id)
-        )

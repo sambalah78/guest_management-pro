@@ -19,6 +19,351 @@ from guest_management.components import (
 from guest_management.styles.theme import button_style, outline_button_style
 
 
+def _scanner_station_panel() -> rx.Component:
+    """Admin-only scanner station management dialog."""
+    return rx.dialog.root(
+        rx.dialog.trigger(
+            rx.button(
+                rx.hstack(
+                    rx.icon(tag="scan-line", size=14),
+                    rx.text("Scanner Stations", size="1"),
+                    spacing="2",
+                ),
+                variant="outline",
+                border_color=GOLD,
+                color=GOLD,
+                size="1",
+                _hover={"bg": GOLD, "color": BLACK},
+                on_click=ScannerState.open_scanner_management,
+            )
+        ),
+        rx.dialog.content(
+            rx.vstack(
+                rx.hstack(
+                    rx.vstack(
+                        rx.heading("Scanner Stations", size="5", color="white"),
+                        rx.text(
+                            "Manage the physical QR scanner workstations for this event.",
+                            color="gray",
+                            size="2",
+                        ),
+                        spacing="1",
+                        align="start",
+                    ),
+                    rx.spacer(),
+                    rx.dialog.close(
+                        rx.button(
+                            rx.icon(tag="x", size=16),
+                            variant="ghost",
+                            color="gray",
+                            size="1",
+                            on_click=ScannerState.close_scanner_management,
+                        )
+                    ),
+                    width="100%",
+                    align="start",
+                ),
+
+                rx.box(
+                    rx.hstack(
+                        rx.icon(tag="info", size=16, color=GOLD),
+                        rx.vstack(
+                            rx.text(
+                                "Each workstation uses its own station credential.",
+                                color="white",
+                                weight="bold",
+                                size="2",
+                            ),
+                            rx.text(
+                                "Never share a station token with another scanner.",
+                                color="gray",
+                                size="1",
+                            ),
+                            spacing="0",
+                            align="start",
+                        ),
+                        spacing="2",
+                        align="start",
+                    ),
+                    padding="0.8em",
+                    border=f"1px solid {GOLD}44",
+                    border_radius="10px",
+                    background=f"{GOLD}0D",
+                    width="100%",
+                ),
+
+                rx.vstack(
+                    rx.hstack(
+                        rx.heading("Registered Stations", size="3", color="white"),
+                        rx.spacer(),
+                        rx.badge(
+                            f"{ScannerState.scanner_devices.length().to_string()} stations",
+                            color_scheme="gray",
+                            variant="soft",
+                        ),
+                        width="100%",
+                        align="center",
+                    ),
+
+                    rx.cond(
+                        ScannerState.scanner_devices.length() > 0,
+                        rx.vstack(
+                            rx.foreach(
+                                ScannerState.scanner_devices,
+                                lambda scanner: rx.box(
+                                    rx.hstack(
+                                        rx.box(
+                                            rx.icon(
+                                                tag="scan-line",
+                                                size=18,
+                                                color=rx.cond(
+                                                    scanner.get("is_active", False),
+                                                    "green",
+                                                    "gray",
+                                                ),
+                                            ),
+                                            width="36px",
+                                            height="36px",
+                                            display="flex",
+                                            align_items="center",
+                                            justify_content="center",
+                                            border_radius="8px",
+                                            background=rx.cond(
+                                                scanner.get("is_active", False),
+                                                "#22c55e18",
+                                                "#ffffff0A",
+                                            ),
+                                        ),
+                                        rx.vstack(
+                                            rx.text(
+                                                scanner.get("device_name", "Scanner Station"),
+                                                color="white",
+                                                weight="bold",
+                                                size="2",
+                                            ),
+                                            rx.text(
+                                                scanner.get("device_id", ""),
+                                                color="gray",
+                                                size="1",
+                                                style={"fontFamily": "monospace"},
+                                            ),
+                                            spacing="0",
+                                            align="start",
+                                            min_width="0",
+                                        ),
+                                        rx.spacer(),
+                                        rx.badge(
+                                            rx.cond(
+                                                scanner.get("is_active", False),
+                                                "ACTIVE",
+                                                "INACTIVE",
+                                            ),
+                                            color_scheme=rx.cond(
+                                                scanner.get("is_active", False),
+                                                "green",
+                                                "gray",
+                                            ),
+                                            variant="soft",
+                                            size="1",
+                                        ),
+                                        rx.cond(
+                                            scanner.get("is_active", False),
+                                            rx.button(
+                                                "Deactivate",
+                                                on_click=lambda: ScannerState.deactivate_scanner(
+                                                    str(scanner.get("device_id", ""))
+                                                ),
+                                                size="1",
+                                                variant="soft",
+                                                color_scheme="orange",
+                                            ),
+                                            rx.button(
+                                                "Activate",
+                                                on_click=lambda: ScannerState.activate_scanner(
+                                                    str(scanner.get("device_id", ""))
+                                                ),
+                                                size="1",
+                                                variant="soft",
+                                                color_scheme="green",
+                                            ),
+                                        ),
+                                        spacing="3",
+                                        width="100%",
+                                        align="center",
+                                    ),
+                                    padding="0.75em",
+                                    border=f"1px solid {DARK_GRAY}",
+                                    border_radius="10px",
+                                    width="100%",
+                                ),
+                            ),
+                            spacing="2",
+                            width="100%",
+                            max_height="260px",
+                            overflow_y="auto",
+                        ),
+                        rx.box(
+                            rx.vstack(
+                                rx.icon(tag="scan-line", size=28, color="gray"),
+                                rx.text("No scanner stations registered", color="gray", size="2"),
+                                rx.text(
+                                    "Provision your first scanner below.",
+                                    color="gray",
+                                    size="1",
+                                ),
+                                spacing="1",
+                                align="center",
+                            ),
+                            padding="1.5em",
+                            border=f"1px dashed {DARK_GRAY}",
+                            border_radius="10px",
+                            width="100%",
+                        ),
+                    ),
+                    spacing="2",
+                    width="100%",
+                ),
+
+                rx.divider(),
+
+                rx.vstack(
+                    rx.heading("Provision New Scanner", size="3", color="white"),
+                    rx.text(
+                        "Give the physical scanner a clear name, such as “Main Entrance” or “Registration Desk”.",
+                        color="gray",
+                        size="1",
+                    ),
+                    rx.input(
+                        placeholder="Scanner station name",
+                        value=ScannerState.new_scanner_name,
+                        on_change=ScannerState.set_new_scanner_name,
+                        width="100%",
+                        bg=BLACK,
+                        color="white",
+                        border_color=GOLD,
+                    ),
+                    rx.button(
+                        rx.hstack(
+                            rx.cond(
+                                ScannerState.scanner_provisioning,
+                                rx.spinner(size="1"),
+                                rx.icon(tag="plus", size=14),
+                            ),
+                            rx.text(
+                                rx.cond(
+                                    ScannerState.scanner_provisioning,
+                                    "Provisioning…",
+                                    "Provision Scanner",
+                                )
+                            ),
+                            spacing="2",
+                        ),
+                        on_click=ScannerState.provision_scanner,
+                        is_disabled=ScannerState.scanner_provisioning,
+                        bg=GOLD,
+                        color=BLACK,
+                        width="100%",
+                        _hover={"opacity": "0.88"},
+                    ),
+                    spacing="2",
+                    width="100%",
+                    align="start",
+                ),
+
+                rx.cond(
+                    ScannerState.new_scanner_token != "",
+                    rx.box(
+                        rx.vstack(
+                            rx.hstack(
+                                rx.icon(tag="shield-check", size=18, color="green"),
+                                rx.text(
+                                    "Scanner credential created",
+                                    color="white",
+                                    weight="bold",
+                                    size="3",
+                                ),
+                                spacing="2",
+                            ),
+                            rx.box(
+                                rx.text(
+                                    "SAVE THIS TOKEN NOW — IT CANNOT BE RECOVERED LATER.",
+                                    color=GOLD,
+                                    weight="bold",
+                                    size="1",
+                                ),
+                                padding="0.65em",
+                                border=f"1px solid {GOLD}66",
+                                border_radius="8px",
+                                background=f"{GOLD}10",
+                                width="100%",
+                            ),
+                            rx.vstack(
+                                rx.text("Device ID", color="gray", size="1"),
+                                rx.text(
+                                    ScannerState.new_scanner_device_id,
+                                    color="white",
+                                    size="2",
+                                    style={"fontFamily": "monospace"},
+                                ),
+                                rx.text("Station Token", color="gray", size="1"),
+                                rx.code(
+                                    ScannerState.new_scanner_token,
+                                    width="100%",
+                                    style={
+                                        "display": "block",
+                                        "whiteSpace": "normal",
+                                        "wordBreak": "break-all",
+                                        "fontSize": "0.75rem",
+                                    },
+                                ),
+                                spacing="1",
+                                align="start",
+                                width="100%",
+                            ),
+                            rx.text(
+                                "Enter this token on the scanner workstation. For security, EventLah never stores the plaintext token.",
+                                color="gray",
+                                size="1",
+                            ),
+                            spacing="3",
+                            align="start",
+                            width="100%",
+                        ),
+                        padding="1em",
+                        border="1px solid #22c55e55",
+                        border_radius="12px",
+                        background="#22c55e0D",
+                        width="100%",
+                    ),
+                    rx.fragment(),
+                ),
+
+                rx.cond(
+                    ScannerState.scanner_provision_error != "",
+                    rx.callout(
+                        ScannerState.scanner_provision_error,
+                        icon="triangle_alert",
+                        color_scheme="red",
+                        size="1",
+                    ),
+                    rx.fragment(),
+                ),
+
+                spacing="4",
+                width="100%",
+                align="stretch",
+            ),
+            max_width="680px",
+            width="calc(100vw - 2em)",
+            background=DARK_GRAY,
+            border=f"1px solid {GOLD}55",
+            padding="1.2em",
+        ),
+        open=ScannerState.scanner_management_open,
+        on_open_change=ScannerState.set_scanner_management_open,
+    )
+
+
 def render_cell(col: str, guest: dict):
     """Render a table cell with column-aware styling."""
     value = guest.get(col, "")
@@ -194,99 +539,42 @@ def _guest_table() -> rx.Component:
                             ),
                             rx.table.cell(
                                 rx.hstack(
-                                    # Individual guest email action.
-                                    # Guest table rows use display-field names in some
-                                    # dashboard paths ("Email"/"ID"), while other paths
-                                    # use database names ("email"/"guest_id"). Do NOT
-                                    # hide the button based on only one spelling.
-                                    # Individual guest email action.
-                                    rx.button(
-                                        rx.hstack(
-                                            rx.cond(
-                                                EmailState.sending_email_guest_id
-                                                == str(
-                                                    guest.get(
-                                                        "ID",
-                                                        guest.get(
-                                                            "Id",
-                                                            guest.get(
-                                                                "id",
-                                                                guest.get(
-                                                                    "guest_id",
-                                                                    "",
-                                                                ),
-                                                            ),
-                                                        ),
-                                                    )
-                                                ),
-                                                rx.spinner(size="1"),
-                                                rx.icon(
-                                                    tag="mail",
-                                                    size=13,
-                                                ),
-                                            ),
-                                            rx.text(
-                                                rx.cond(
-                                                    EmailState.sending_email_guest_id
-                                                    == str(
-                                                        guest.get(
-                                                            "ID",
-                                                            guest.get(
-                                                                "Id",
-                                                                guest.get(
-                                                                    "id",
-                                                                    guest.get(
-                                                                        "guest_id",
-                                                                        "",
-                                                                    ),
-                                                                ),
-                                                            ),
-                                                        )
-                                                    ),
-                                                    "Sending…",
-                                                    rx.cond(
-                                                        guest.get("email_sent", False),
-                                                        "Resend Email",
-                                                        "Send Email",
-                                                    ),
-                                                ),
-                                                size="1",
-                                            ),
-                                            spacing="1",
-                                            align="center",
-                                        ),
-                                        on_click=lambda: EmailState.open_email_dialog(guest),
-                                        size="1",
-                                        variant="outline",
-                                        border_color=rx.cond(
-                                            guest.get("email_sent", False),
-                                            "green",
-                                            GOLD,
-                                        ),
-                                        color=rx.cond(
-                                            guest.get("email_sent", False),
-                                            "green",
-                                            GOLD,
-                                        ),
-                                    ),
                                     rx.cond(
-                                        EventState.show_food_vouchers,
+                                        guest.get("Email"),
                                         rx.tooltip(
                                             rx.button(
-                                                rx.icon(
-                                                    tag="history",
-                                                    size=12,
+                                                rx.cond(
+                                                    EmailState.sending_email_guest_id == str(guest.get("ID", guest.get("Id", guest.get("id", "")))),
+                                                    rx.spinner(size="1"),
+                                                    rx.icon(
+                                                        tag="mail",
+                                                        size=14,
+                                                        color=rx.cond(guest.get("email_sent", False), "green", GOLD),
+                                                        style={"width": "clamp(12px, 1.5vw, 16px)", "height": "clamp(12px, 1.5vw, 16px)"},
+                                                    ),
                                                 ),
-                                                on_click=lambda: VoucherState.show_guest_history(
-                                                    guest
-                                                ),
+                                                on_click=lambda: EmailState.open_email_dialog(guest),
+                                                size="1",
                                                 variant="ghost",
-                                                _hover={
-                                                    "bg": f"{GOLD}33"
-                                                },
+                                                is_disabled=EmailState.sending_email_guest_id == str(guest.get("ID", guest.get("Id", guest.get("id", "")))),
+                                                _hover={"bg": f"{GOLD}33"},
                                             ),
-                                            content="View purchase history",
+                                            content=rx.cond(
+                                                EmailState.sending_email_guest_id == str(guest.get("ID", guest.get("Id", guest.get("id", "")))),
+                                                "Sending…",
+                                                rx.cond(guest.get("email_sent", False), "Resend email", "Send email"),
+                                            ),
                                         ),
+                                        rx.box(),
+                                    ),
+                                    rx.tooltip(
+                                        rx.button(
+                                            rx.icon(tag="history", size=12),
+                                            on_click=lambda: VoucherState.show_guest_history(guest),
+                                            variant="ghost",
+                                            _hover={"bg": f"{GOLD}33"},
+                                        ),
+                                        content="View purchase history",
                                     ),
                                     # Voucher button - only for Sports Day events with amount > 0
                                     rx.cond(
@@ -294,8 +582,7 @@ def _guest_table() -> rx.Component:
                                         rx.tooltip(
                                             rx.button(
                                                 rx.icon(tag="store", size=14, color=GOLD),
-                                                on_click=lambda: rx.redirect(
-                                                    f"/voucher-manager?guest_id={guest.get('ID', guest.get('guest_id', ''))}"),
+                                                on_click=lambda: rx.redirect(f"/voucher-manager?guest_id={guest.get('ID', guest.get('guest_id', ''))}"),
                                                 size="1",
                                                 variant="ghost",
                                                 _hover={"bg": f"{GOLD}33"},
@@ -310,8 +597,7 @@ def _guest_table() -> rx.Component:
                                                 tag="user_check",
                                                 size=14,
                                                 color=rx.cond(guest.get("Status") == "Present", "green", "red"),
-                                                style={"width": "clamp(12px, 1.5vw, 16px)",
-                                                       "height": "clamp(12px, 1.5vw, 16px)"},
+                                                style={"width": "clamp(12px, 1.5vw, 16px)", "height": "clamp(12px, 1.5vw, 16px)"},
                                             ),
                                             on_click=lambda: ScannerState.handle_scan(
                                                 str(guest.get("ID", guest.get("Id", guest.get("id", ""))))
@@ -333,8 +619,6 @@ def _guest_table() -> rx.Component:
                                     ),
                                     spacing="1",
                                     align="center",
-                                    min_width="150px",
-                                    wrap="wrap",
                                 ),
                                 padding="0.2em 0.5em",
                                 style={
@@ -365,7 +649,7 @@ def _guest_table() -> rx.Component:
                 "overflowY": "auto",
                 "flex": "1",
                 "minHeight": "200px",
-                "maxHeight": "calc(100vh - 450px)",
+                # "maxHeight": "calc(100vh - 450px)",
                 "borderRadius": "8px",
                 "border": f"1px solid {GOLD}33",
             },
@@ -394,7 +678,6 @@ def _guest_table() -> rx.Component:
             },
         ),
     )
-
 
 def _no_event_selected() -> rx.Component:
     """Display when no event is selected."""
@@ -434,12 +717,12 @@ def _no_event_selected() -> rx.Component:
 
 
 def _is_event_selected() -> rx.Component:
-    """Check if event is selected and show appropriate content."""
+    """Check if event is loaded and show appropriate content."""
     return rx.cond(
-        State.current_event_id == "",
+        EventState.current_event_id == "",
         _no_event_selected(),
         rx.cond(
-            State.current_event_id == None,  # noqa: E711
+            EventState.current_event_id == None,  # noqa: E711
             _no_event_selected(),
             _dashboard_content(),
         ),
@@ -454,15 +737,15 @@ def _dashboard_content() -> rx.Component:
             rx.vstack(
                 rx.hstack(
                     rx.heading(
-                        State.current_event.get("name", "Event"),
+                        EventState.current_event.get("name", "Event"),
                         font_size=["0.8em", "0.9em", "1em", "1.2em"],
                         color=GOLD,
                         weight="bold",
                     ),
                     rx.badge(
                         rx.hstack(
-                            rx.text(State.event_config_icon),
-                            rx.text(State.event_config_name),
+                            rx.text(EventState.event_config_icon),
+                            rx.text(EventState.event_config_name),
                             spacing="1",
                         ),
                         color_scheme="gold",
@@ -474,19 +757,19 @@ def _dashboard_content() -> rx.Component:
                 rx.hstack(
                     rx.hstack(
                         rx.icon(tag="calendar", size=10, color=GOLD),
-                        rx.text(State.current_event.get("date", ""), color=LIGHT_GRAY,
+                        rx.text(EventState.current_event.get("date", ""), color=LIGHT_GRAY,
                                 font_size=["0.35em", "0.45em", "0.55em", "0.7em"]),
                         spacing="1",
                     ),
                     rx.hstack(
                         rx.icon(tag="clock", size=10, color=GOLD),
-                        rx.text(State.current_event.get("time", ""), color=LIGHT_GRAY,
+                        rx.text(EventState.current_event.get("time", ""), color=LIGHT_GRAY,
                                 font_size=["0.35em", "0.45em", "0.55em", "0.7em"]),
                         spacing="1",
                     ),
                     rx.hstack(
                         rx.icon(tag="map-pin", size=10, color=GOLD),
-                        rx.text(State.current_event.get("venue", ""), color=LIGHT_GRAY,
+                        rx.text(EventState.current_event.get("venue", ""), color=LIGHT_GRAY,
                                 font_size=["0.35em", "0.45em", "0.55em", "0.7em"]),
                         spacing="1",
                     ),
@@ -531,7 +814,9 @@ def _dashboard_content() -> rx.Component:
                         EventState.show_lucky_draw,
                         rx.menu.item(
                             rx.hstack(rx.icon(tag="gift", size=12), rx.text("Lucky Draw", size="1"), spacing="2"),
-                            on_click=rx.redirect(f"/lucky-draw/{State.current_event_id}"),
+                            on_click=rx.redirect(
+                                f"/lucky-draw/{State.current_event_id}"
+                            ),
                         ),
                     ),
                     rx.cond(EventState.show_lucky_draw, rx.menu.separator()),
@@ -554,19 +839,21 @@ def _dashboard_content() -> rx.Component:
                     ),
                     rx.menu.item(
                         rx.hstack(
-                            rx.icon(
-                                tag="mail-check",
-                                size=12,
-                            ),
-                            rx.text(
-                                "Email Management",
-                                size="1",
-                            ),
+                            rx.icon(tag="mail-check", size=12),
+                            rx.text("Email Management", size="1"),
                             spacing="2",
                         ),
                         on_click=EmailState.open_email_management,
                     ),
                     rx.menu.separator(),
+                    rx.menu.item(
+                        rx.hstack(
+                            rx.icon(tag="scan-line", size=12),
+                            rx.text("Scanner Stations", size="1"),
+                            spacing="2",
+                        ),
+                        on_click=ScannerState.open_scanner_management,
+                    ),
                     rx.menu.item(
                         rx.hstack(rx.icon(tag="calendar", size=12), rx.text("Events", size="1"), spacing="2"),
                         on_click=rx.redirect("/events"),
@@ -725,6 +1012,7 @@ def _dashboard_content() -> rx.Component:
                 border_top=f"1px solid {GOLD}33",
                 wrap="wrap",
                 spacing="2",
+                flex_shrink="0",
             ),
             rx.fragment(),
         ),
@@ -736,8 +1024,15 @@ def _dashboard_content() -> rx.Component:
         guest_qr_dialog.guest_qr_dialog(),
         email_dialog.email_dialog(),
         transaction_history.transaction_history_modal(),
-
+        _scanner_station_panel(),
+        style={
+            "display": "flex",
+            "flexDirection": "column",
+            "minHeight": "0",
+        },
         width="100%",
+        flex="1",
+        min_height="0",
         spacing="3",
     )
 
@@ -752,6 +1047,7 @@ def dashboard() -> rx.Component:
             # ── Check if event is selected ──────────────────────────────────
             _is_event_selected(),
             email_management.email_management_panel(),
+
             width="100%",
             style={
                 "height": "100%",

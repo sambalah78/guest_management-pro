@@ -11,9 +11,7 @@ from .scanner_repository import ScannerRepository
 from .email_job_repository import EmailJobRepository
 from .checkin_repository import CheckinRepository
 from .winner_repository import WinnerRepository
-from .google_drive_connection_repository import (
-    GoogleDriveConnectionRepository,
-)
+from .pre_draw_prize_repository import PreDrawPrizeRepository
 from .pre_draw_winner_repository import PreDrawWinnerRepository
 
 __all__ = [
@@ -27,6 +25,6 @@ __all__ = [
     "EmailJobRepository",
     "CheckinRepository",
     "WinnerRepository",
-    "GoogleDriveConnectionRepository",
-    "PreDrawWinnerRepository",
+    "PreDrawPrizeRepository",
+    "PreDrawWinnerRepository"
 ]

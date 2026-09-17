@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import secrets
+
 from urllib.parse import parse_qs, urlparse
 
 from .config import settings
@@ -22,9 +22,6 @@ def verify_qr_token(event_id: int, guest_id: str, token: str) -> bool:
     return bool(token) and hmac.compare_digest(expected, token.strip())
 
 
-def create_scanner_token() -> str:
-    """Create a high-entropy one-time/provisioning token."""
-    return secrets.token_urlsafe(32)
 
 
 def extract_scan_payload(raw: str) -> tuple[str | None, str | None, str | None]:

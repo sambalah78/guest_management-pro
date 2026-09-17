@@ -3,13 +3,16 @@
 
 import reflex as rx
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from guest_management.utils.formatting import (
+    format_date,
+    format_time,
+    format_datetime,
+)
 import base64
-import os
 
-from guest_management.core.config import settings
+
 from guest_management.utils.constants import EVENT_TYPES
-from guest_management.database_client import get_db
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -51,30 +54,74 @@ class EventState(rx.State):
 
     @rx.var
     def formatted_events(self) -> List[Dict[str, Any]]:
-        """Return events with formatted dates."""
+        """Return events with human-facing date/time formatting."""
         formatted = []
+
         for event in self.events:
             event_copy = event.copy()
-            created_at = event.get("created_at", "")
-            if created_at:
-                try:
-                    dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                    event_copy["formatted_created_at"] = dt.strftime("%d %b %Y")
-                except:
-                    event_copy["formatted_created_at"] = created_at
-            else:
-                event_copy["formatted_created_at"] = ""
+
+            event_copy["formatted_date"] = (
+                    format_date(event.get("date", ""))
+                    or "Date TBD"
+            )
+
+            event_copy["formatted_time"] = (
+                    format_time(event.get("time", ""))
+                    or "Time TBD"
+            )
+
+            event_copy["formatted_created_at"] = (
+                format_datetime(event.get("created_at", ""))
+                if event.get("created_at")
+                else ""
+            )
+
             formatted.append(event_copy)
+
         return formatted
+
+    @rx.var
+    def current_event_formatted_date(self) -> str:
+        from guest_management.utils.formatting import format_date
+
+        if not self.current_event:
+            return ""
+
+        return format_date(
+            self.current_event.get("date", "")
+        )
+
+    @rx.var
+    def current_event_formatted_time(self) -> str:
+        from guest_management.utils.formatting import format_time
+
+        if not self.current_event:
+            return ""
+
+        return format_time(
+            self.current_event.get("time", "")
+        )
+
+    @rx.var
+    def current_event_formatted_datetime(self) -> str:
+        from guest_management.utils.formatting import format_event_datetime
+
+        if not self.current_event:
+            return ""
+
+        return format_event_datetime(
+            self.current_event.get("date", ""),
+            self.current_event.get("time", ""),
+        )
 
     @rx.var
     def event_config_name(self) -> str:
         """Get event type name."""
         event_type = (
-            self.current_event.get("event_type")
-            if self.current_event
-            else self.event_type
-        ) or "company_dinner"
+                         self.current_event.get("event_type")
+                         if self.current_event
+                         else self.event_type
+                     ) or "company_dinner"
 
         config = EVENT_TYPES.get(
             event_type,
@@ -86,10 +133,10 @@ class EventState(rx.State):
     def event_config_icon(self) -> str:
         """Get event type icon."""
         event_type = (
-            self.current_event.get("event_type")
-            if self.current_event
-            else self.event_type
-        ) or "company_dinner"
+                         self.current_event.get("event_type")
+                         if self.current_event
+                         else self.event_type
+                     ) or "company_dinner"
 
         config = EVENT_TYPES.get(
             event_type,
@@ -136,14 +183,22 @@ class EventState(rx.State):
         try:
             from guest_management.state.auth_state import AuthState
             auth = await self.get_state(AuthState)
+
             if not auth.user_id:
                 self.events = []
                 yield rx.redirect("/login")
                 return
+
             self.user_id = auth.user_id
             self.is_authenticated = True
+
             from guest_management.services.event_service import EventService
-            self.events = EventService().get_user_events(auth.user_id)
+
+            self.events = EventService().get_user_events(
+                auth.user_id,
+                auth.user,
+            )
+
         except Exception:
             logger.exception("Unable to load events")
             self.events = []
@@ -175,14 +230,20 @@ class EventState(rx.State):
         try:
             from guest_management.state.auth_state import AuthState
             from guest_management.services.event_service import EventService
-            from guest_management.services.google_drive_asset_service import (
-                GoogleDriveAssetService,
-            )
+            from guest_management.services.storage_service import StorageService
 
             auth = await self.get_state(AuthState)
 
             if not auth.user_id:
                 yield rx.redirect("/login")
+                return
+
+            from guest_management.services.auth_service import AuthService
+
+            if not AuthService.can_manage_events(auth.user):
+                yield rx.toast.error(
+                    "Your EventLah account is not authorized to manage events."
+                )
                 return
 
             event_data = {
@@ -203,22 +264,19 @@ class EventState(rx.State):
                     self.wedding_invitation_card
                 )
 
-            # Create a Google Drive service using the authenticated
-            # user's Google OAuth context.
-            drive_service = GoogleDriveAssetService(
-                user_id=auth.user_id
-            )
+            # Create the Supabase Storage service.
+            storage_service = StorageService()
 
             # EventService handles:
             # 1. DB event creation
-            # 2. Google Drive event folder creation
-            # 3. Drive folder ID persistence
-            # 4. Logo/invitation upload
+            # 2. Supabase Storage logo/invitation upload
+            # 3. Storage path persistence
             new_event = EventService(
-                drive_service=drive_service
+                storage_service=storage_service
             ).create_event(
                 event_data,
                 auth.user_id,
+                auth.user,
             )
 
             self.current_event = new_event
@@ -274,13 +332,18 @@ class EventState(rx.State):
                 yield rx.redirect("/login")
                 return
 
-            # Only approved EventLah accounts can create events.
-            if not settings.is_event_creator(auth.user_email):
+            from guest_management.services.auth_service import AuthService
+
+            if not AuthService.can_manage_events(auth.user):
                 yield rx.toast.error(
-                    "Your Google account is not authorized to create events."
+                    "Your EventLah account is not authorized to manage events."
                 )
                 return
-            EventService().delete_event(event_id, auth.user_id)
+            EventService().delete_event(
+                event_id,
+                auth.user_id,
+                auth.user,
+            )
             yield rx.toast.success("Event deleted successfully")
             async for _ in self.load_events():
                 yield _
@@ -291,6 +354,83 @@ class EventState(rx.State):
     # ========================================================================
     # SELECT EVENT
     # ========================================================================
+    async def load_event_from_url(self):
+        """Load the dashboard event from the current dynamic URL."""
+        import re
+
+        try:
+            path = getattr(self.router.url, "path", "") or ""
+
+            match = re.search(r"/dashboard/(\d+)", path)
+            if not match:
+                self.current_event = None
+                self.current_event_id = ""
+                return
+
+            event_id = int(match.group(1))
+
+            from guest_management.state.auth_state import AuthState
+            from guest_management.services.event_service import EventService
+            from guest_management.core.exceptions import (
+                AuthorizationError,
+                EventNotFoundError,
+            )
+
+            auth = await self.get_state(AuthState)
+
+            if not auth.user_id:
+                self.current_event = None
+                self.current_event_id = ""
+                yield rx.redirect("/login")
+                return
+
+            event = EventService().get_event(
+                event_id,
+                auth.user_id,
+                auth.user,
+            )
+
+            self.current_event = event
+            self.current_event_id = str(event_id)
+            self.event_type = event.get(
+                "event_type",
+                "company_dinner",
+            )
+
+            logger.info(
+                "Dashboard event loaded: id=%s name=%s",
+                event_id,
+                event.get("name", ""),
+            )
+
+            yield
+
+        except (AuthorizationError, EventNotFoundError):
+            logger.warning(
+                "Dashboard event not found or access denied: %s",
+                getattr(self.router.url, "path", ""),
+            )
+
+            self.current_event = None
+            self.current_event_id = ""
+
+            yield rx.toast.error(
+                "Event not found or access denied"
+            )
+            yield rx.redirect("/events")
+
+        except Exception:
+            logger.exception(
+                "Unable to load dashboard event from URL"
+            )
+
+            self.current_event = None
+            self.current_event_id = ""
+
+            yield rx.toast.error(
+                "Unable to load event"
+            )
+            yield rx.redirect("/events")
 
     async def select_event(self, event_id):
         try:
@@ -298,24 +438,102 @@ class EventState(rx.State):
         except (TypeError, ValueError):
             yield rx.toast.error("Invalid event ID")
             return
+
         self.is_loading = True
         yield
+
         try:
             from guest_management.state.auth_state import AuthState
             from guest_management.services.event_service import EventService
+
             auth = await self.get_state(AuthState)
-            event = EventService().get_event(event_id, auth.user_id)
+
+            if not auth.user_id:
+                yield rx.redirect("/login")
+                return
+
+            print(
+                "SELECT_EVENT AUTH:",
+                "user_id=", auth.user_id,
+                "role=", auth.user.get("role"),
+                "is_active=", auth.user.get("is_active"),
+                "email=", auth.user.get("email"),
+                flush=True,
+            )
+
+            event = EventService().get_event(
+                event_id,
+                auth.user_id,
+                auth.user,
+            )
+
             self.current_event = event
             self.current_event_id = str(event_id)
-            self.event_type = event.get("event_type", "company_dinner")
-            yield rx.redirect(f"/dashboard/{event_id}")
+            self.event_type = event.get(
+                "event_type",
+                "company_dinner",
+            )
+
+            yield rx.redirect(
+                f"/dashboard/{event_id}"
+            )
+
         except Exception:
             logger.exception("Select event failed")
-            yield rx.toast.error("Event not found or access denied")
+            yield rx.toast.error(
+                "Event not found or access denied"
+            )
             yield rx.redirect("/events")
+
         finally:
             self.is_loading = False
             yield
+
+    async def load_event(self, event_id):
+        try:
+            event_id = int(event_id)
+        except (TypeError, ValueError):
+            yield rx.toast.error("Invalid event ID")
+            yield rx.redirect("/events")
+            return
+
+        try:
+            from guest_management.state.auth_state import AuthState
+            from guest_management.services.event_service import EventService
+
+            auth = await self.get_state(AuthState)
+
+            if not auth.user_id:
+                yield rx.redirect("/login")
+                return
+
+            event = EventService().get_event(
+                event_id,
+                auth.user_id,
+                auth.user,
+            )
+
+            self.current_event = event
+            self.current_event_id = str(event_id)
+            self.event_type = event.get(
+                "event_type",
+                "company_dinner",
+            )
+
+            yield
+
+        except Exception:
+            logger.exception(
+                "Unable to load event %s for dashboard",
+                event_id,
+            )
+            self.current_event = None
+            self.current_event_id = ""
+
+            yield rx.toast.error(
+                "Event not found or access denied"
+            )
+            yield rx.redirect("/events")
 
     # ========================================================================
     # REFRESH EVENT TYPE
@@ -326,7 +544,10 @@ class EventState(rx.State):
             return
         try:
             from guest_management.services.event_service import EventService
-            self.event_type = EventService().get_event_type(int(self.current_event_id)) or "company_dinner"
+            self.event_type = (
+                    self.current_event.get("event_type")
+                    or "company_dinner"
+            )
             if self.current_event:
                 self.current_event["event_type"] = self.event_type
         except Exception:
@@ -395,11 +616,48 @@ class EventState(rx.State):
         self.wedding_invitation_card = f"data:image/{ext};base64,{encoded}"
         yield rx.toast.success("Invitation card uploaded successfully!")
 
-    def navigate_to_event(self, event_id):
-        event_id_str = str(event_id) if event_id else ""
-        if event_id_str:
-            return rx.redirect(f"/dashboard/{event_id_str}")
-        return rx.toast.error("Invalid event ID")
+    async def navigate_to_event(self, event_id):
+        try:
+            event_id = int(event_id)
+        except (TypeError, ValueError):
+            yield rx.toast.error("Invalid event ID")
+            return
+
+        try:
+            from guest_management.state.auth_state import AuthState
+            from guest_management.services.event_service import EventService
+
+            auth = await self.get_state(AuthState)
+
+            if not auth.user_id:
+                yield rx.redirect("/login")
+                return
+
+            event = EventService().get_event(
+                event_id,
+                auth.user_id,
+                auth.user,
+            )
+
+            self.current_event = event
+            self.current_event_id = str(event_id)
+            self.event_type = event.get(
+                "event_type",
+                "company_dinner",
+            )
+
+            yield rx.redirect(f"/dashboard/{event_id}")
+
+        except Exception:
+            logger.exception(
+                "Unable to navigate to event %s",
+                event_id,
+            )
+            yield rx.toast.error(
+                "Event not found or access denied"
+            )
+            yield rx.redirect("/events")
+
 
     def handle_select_event(self, event_id: str):
         if not event_id:
@@ -424,4 +682,3 @@ class EventState(rx.State):
             yield rx.toast.error("Invalid event ID format")
             return
         yield self.delete_event(event_id_str)
-

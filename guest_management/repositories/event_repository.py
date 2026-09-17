@@ -17,57 +17,45 @@ class EventRepository(BaseRepository):
     def update_guest_list_asset(
             self,
             event_id: int,
-            user_id: str,
-            file_id: str,
+            storage_path: str,
             filename: str,
             mime_type: str,
     ) -> Optional[Dict[str, Any]]:
-        """Store Google Drive guest-list metadata for an event.
-
-        The event must belong to the authenticated user.
-        """
+        """Store Supabase Storage guest-list metadata for an event."""
 
         if not event_id:
             raise ValueError("event_id is required")
 
-        if not user_id:
-            raise ValueError("user_id is required")
+        if not storage_path:
+            raise ValueError("storage_path is required")
 
-        if not file_id:
-            raise ValueError("file_id is required")
+        try:
+            response = (
+                self.db
+                .table("events")
+                .update(
+                    {
+                        "guest_list_storage_path": storage_path,
+                        "guest_list_filename": filename or "",
+                        "guest_list_mime_type": mime_type or "",
+                        "guest_list_uploaded_at": datetime.now(timezone.utc),
+                    }
+                )
+                .eq("id", int(event_id))
+                .select("*")
+                .limit(1)
+                .execute()
+            )
 
-        # --------------------------------------------------------------
-        # Verify event ownership BEFORE updating anything.
-        # --------------------------------------------------------------
+            return response.data[0] if response.data else None
 
-        response = (
-            self.db
-            .table("events")
-            .select("id,user_id")
-            .eq("id", int(event_id))
-            .eq("user_id", user_id)
-            .limit(1)
-            .execute()
-        )
+        except Exception as exc:
+            self._raise_db(
+                "update guest list storage metadata",
+                exc,
+            )
 
-        if not response.data:
-            return None
-
-        # --------------------------------------------------------------
-        # Update Drive metadata.
-        # --------------------------------------------------------------
-
-        updated = self.update(
-            int(event_id),
-            {
-                "guest_list_drive_file_id": file_id,
-                "guest_list_filename": filename or "",
-                "guest_list_mime_type": mime_type or "",
-                "guest_list_uploaded_at": datetime.now(timezone.utc),
-            },
-        )
-
-        return updated
+        return None
 
     def get_by_user(
         self,
@@ -95,15 +83,18 @@ class EventRepository(BaseRepository):
                 logo,
                 wedding_invitation,
 
-                logo_drive_file_id,
+                logo_storage_path,
                 logo_filename,
                 logo_mime_type,
-
-                invitation_drive_file_id,
+                
+                invitation_storage_path,
                 invitation_filename,
                 invitation_mime_type,
-
-                event_drive_folder_id,
+                
+                guest_list_storage_path,
+                guest_list_filename,
+                guest_list_mime_type,
+                guest_list_uploaded_at,
 
                 created_at,
                 updated_at
@@ -121,6 +112,65 @@ class EventRepository(BaseRepository):
         )
 
         return response.data or []
+
+    def get_all(
+            self,
+            limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Return all events for authorized global administrators."""
+
+        response = (
+            self.db.table("events")
+            .select("""
+                id,
+                user_id,
+                name,
+                venue,
+                date,
+                time,
+                theme,
+                company_name,
+                logo,
+                wedding_invitation,
+                logo_storage_path,
+                logo_filename,
+                logo_mime_type,
+                invitation_storage_path,
+                invitation_filename,
+                invitation_mime_type,
+                guest_list_storage_path,
+                guest_list_filename,
+                guest_list_mime_type,
+                guest_list_uploaded_at,
+                guest_count,
+                present_count,
+                created_at,
+                updated_at
+            """)
+            .order("created_at", desc=True)
+            .limit(min(max(int(limit), 1), 200))
+            .execute()
+        )
+
+        return response.data or []
+
+    def get_by_id_any(
+            self,
+            event_id: int,
+    ) -> Dict[str, Any]:
+        """Return an event without owner filtering.
+
+        Caller must perform authorization before using this method.
+        """
+        response = (
+            self.db.table("events")
+            .select("*")
+            .eq("id", int(event_id))
+            .limit(1)
+            .execute()
+        )
+
+        return response.data[0] if response.data else {}
 
     def get_by_id(
         self,
@@ -163,11 +213,11 @@ class EventRepository(BaseRepository):
                 venue,
                 theme,
 
-                logo_drive_file_id,
+                logo_storage_path,
                 logo_filename,
                 logo_mime_type,
-
-                invitation_drive_file_id,
+                
+                invitation_storage_path,
                 invitation_filename,
                 invitation_mime_type
                 """
@@ -244,12 +294,13 @@ class EventRepository(BaseRepository):
             now,
         )
 
-        # New Drive metadata fields.
+        # Supabase Storage metadata.
         #
         # These defaults make the repository safe for events
         # created without uploaded assets.
+
         data.setdefault(
-            "logo_drive_file_id",
+            "logo_storage_path",
             "",
         )
 
@@ -264,7 +315,7 @@ class EventRepository(BaseRepository):
         )
 
         data.setdefault(
-            "invitation_drive_file_id",
+            "invitation_storage_path",
             "",
         )
 
@@ -277,9 +328,25 @@ class EventRepository(BaseRepository):
             "invitation_mime_type",
             "",
         )
+
         data.setdefault(
-            "event_drive_folder_id",
+            "guest_list_storage_path",
             "",
+        )
+
+        data.setdefault(
+            "guest_list_filename",
+            "",
+        )
+
+        data.setdefault(
+            "guest_list_mime_type",
+            "",
+        )
+
+        data.setdefault(
+            "guest_list_uploaded_at",
+            None,
         )
 
         response = (
@@ -389,27 +456,3 @@ class EventRepository(BaseRepository):
 
         return bool(response.data)
 
-    # ==================================================================
-    # EVENT TYPE
-    # ==================================================================
-
-    def get_event_type(
-        self,
-        event_id: int,
-    ) -> Optional[str]:
-        """Return an event's type."""
-
-        response = (
-            self.db
-            .table("events")
-            .select("event_type")
-            .eq("id", int(event_id))
-            .limit(1)
-            .execute()
-        )
-
-        return (
-            response.data[0].get("event_type")
-            if response.data
-            else None
-        )

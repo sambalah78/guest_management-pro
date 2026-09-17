@@ -6,6 +6,7 @@ from .event import Event, EventType
 from .stall import Stall, MenuItem
 from .transaction import Transaction
 from .scanner import ScannerDevice
+from .pre_draw_prize import PreDrawPrize
 
 __all__ = [
     "Guest",
@@ -16,4 +17,5 @@ __all__ = [
     "MenuItem",
     "Transaction",
     "ScannerDevice",
+    "PreDrawPrize",
 ]

@@ -1,110 +1,185 @@
-// assets/js/usb_scanner.js
-console.log('EventLah Multi-Scanner System Loaded');
+// EventLah USB Scanner Workstation
+//
+// A USB QR scanner behaves as a keyboard/HID device.
+// The browser therefore identifies the WORKSTATION, not the
+// individual physical USB scanner.
+//
+// The server-side ScannerState owns the authenticated station identity.
+
+console.log("EventLah USB Scanner Workstation Loaded");
 
 window.scannerActive = false;
-let scanBuffers = {};
-let scannerTimestamps = {};
 
-// Support multiple scanners by device ID
-function getScannerId(e) {
-    // Try to identify which scanner sent the input
-    // Some scanners send a unique prefix or use different key codes
-    return e.target ? e.target.id || 'default' : 'default';
-}
-
-document.addEventListener('keydown', function(e) {
-    if (!window.scannerActive) return;
-
-    // Ignore modifier keys
-    if (e.ctrlKey || e.altKey || e.metaKey) return;
-
-    const scannerId = getScannerId(e);
-    const currentTime = Date.now();
-    const timeDiff = currentTime - (scannerTimestamps[scannerId] || currentTime);
-    scannerTimestamps[scannerId] = currentTime;
-
-    // Reset buffer if typing is too slow (human typing)
-    if (timeDiff > 200 && e.key !== 'Enter') {
-        scanBuffers[scannerId] = '';
-    }
-
-    if (e.key === 'Enter') {
-        e.preventDefault();
-        const code = (scanBuffers[scannerId] || '').trim();
-        if (code.length >= 3) {
-            processGlobalScan(code, scannerId);
-        }
-        scanBuffers[scannerId] = '';
-    } else if (e.key.length === 1) {
-        scanBuffers[scannerId] = (scanBuffers[scannerId] || '') + e.key;
-    }
-});
-
-// Queue for processing scans
+let scanBuffer = "";
+let lastKeyTime = 0;
 let scanQueue = [];
 let isProcessingQueue = false;
 
-function processGlobalScan(code, scannerId) {
-    console.log(`Scanner ${scannerId} captured:`, code);
+const HUMAN_TYPING_TIMEOUT_MS = 200;
+const MAX_SCAN_AGE_MS = 5000;
+const BETWEEN_SCAN_DELAY_MS = 100;
 
-    // Add to queue
-    scanQueue.push({ code, scannerId, timestamp: Date.now() });
 
-    // Process queue if not already processing
+document.addEventListener("keydown", function (event) {
+    if (!window.scannerActive) {
+        return;
+    }
+
+    // Ignore browser/application shortcuts.
+    if (event.ctrlKey || event.altKey || event.metaKey) {
+        return;
+    }
+
+    const now = Date.now();
+    const elapsed = now - lastKeyTime;
+    lastKeyTime = now;
+
+    // A normal person typing is much slower than a USB scanner.
+    // Reset the buffer when the gap indicates a new input sequence.
+    if (elapsed > HUMAN_TYPING_TIMEOUT_MS && event.key !== "Enter") {
+        scanBuffer = "";
+    }
+
+    if (event.key === "Enter") {
+        event.preventDefault();
+
+        const code = scanBuffer.trim();
+        scanBuffer = "";
+
+        if (code.length >= 3) {
+            queueScan(code);
+        }
+
+        return;
+    }
+
+    // Only accept printable characters.
+    if (event.key.length === 1) {
+        scanBuffer += event.key;
+    }
+});
+
+
+function queueScan(code) {
+    scanQueue.push({
+        code: code,
+        timestamp: Date.now()
+    });
+
     if (!isProcessingQueue) {
-        processQueue();
+        processScanQueue();
     }
 }
 
-async function processQueue() {
-    if (isProcessingQueue || scanQueue.length === 0) return;
+
+async function processScanQueue() {
+    if (isProcessingQueue) {
+        return;
+    }
 
     isProcessingQueue = true;
 
-    while (scanQueue.length > 0) {
-        const item = scanQueue.shift();
+    try {
+        while (scanQueue.length > 0) {
+            const item = scanQueue.shift();
 
-        // Skip if too old (> 5 seconds)
-        if (Date.now() - item.timestamp > 5000) {
-            console.log('Skipping old scan:', item.code);
-            continue;
-        }
-
-        try {
-            // Find the Reflex bridge input
-            const rxInput = document.querySelector('.reflex-scan-bridge input');
-            if (rxInput) {
-                const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                nativeSetter.call(rxInput, item.code);
-
-                const event = new Event('input', { bubbles: true });
-                rxInput.dispatchEvent(event);
-
-                // Small delay between scans
-                await new Promise(resolve => setTimeout(resolve, 100));
+            // Never process an unexpectedly old scan.
+            if (Date.now() - item.timestamp > MAX_SCAN_AGE_MS) {
+                console.warn("Skipping stale scanner input");
+                continue;
             }
-        } catch(e) {
-            console.error('Process error:', e);
-        }
-    }
 
-    isProcessingQueue = false;
+            const rxInput = document.querySelector(
+                ".reflex-scan-bridge input"
+            );
+
+            if (!rxInput) {
+                console.error("EventLah scanner bridge input not found");
+                continue;
+            }
+
+            try {
+                const setter = Object.getOwnPropertyDescriptor(
+                    HTMLInputElement.prototype,
+                    "value"
+                ).set;
+
+                setter.call(rxInput, item.code);
+
+                rxInput.dispatchEvent(
+                    new Event("input", { bubbles: true })
+                );
+
+                await new Promise((resolve) =>
+                    setTimeout(resolve, BETWEEN_SCAN_DELAY_MS)
+                );
+            } catch (error) {
+                console.error(
+                    "EventLah scanner bridge error:",
+                    error
+                );
+            }
+        }
+    } finally {
+        isProcessingQueue = false;
+    }
 }
 
-// Window functions for external control
-window.activateAllScanners = function() {
-    console.log('All scanners activated');
+
+/**
+ * Activate this workstation's USB scanner.
+ *
+ * IMPORTANT:
+ * This does NOT activate all scanners.
+ * Station identity is handled by ScannerState/server authentication.
+ */
+window.activateScanner = function () {
+    console.log("EventLah scanner workstation activated");
+
     window.scannerActive = true;
-    scanBuffers = {};
-    scannerTimestamps = {};
+
+    scanBuffer = "";
+    lastKeyTime = 0;
+    scanQueue = [];
 };
 
-window.deactivateAllScanners = function() {
-    console.log('All scanners deactivated');
+
+/**
+ * Deactivate this workstation's USB scanner.
+ */
+window.deactivateScanner = function () {
+    console.log("EventLah scanner workstation deactivated");
+
     window.scannerActive = false;
-    scanBuffers = {};
-    scannerTimestamps = {};
+
+    scanBuffer = "";
+    lastKeyTime = 0;
+    scanQueue = [];
 };
 
-window.enableAllScanners = window.activateAllScanners;
-window.disableAllScanners = window.deactivateAllScanners;
+window.scannerStationAuthenticate = function (token) {
+    const input = document.getElementById(
+        "scanner-station-token"
+    );
+
+    if (!token) return;
+
+    // Pass the credential to the Reflex state handler.
+    window.__eventlahScannerStationToken = token;
+
+    console.log("Scanner station authentication requested");
+
+    // The actual server-side authentication bridge is established
+    // by the Reflex page/state event.
+};
+/*
+ * Backward-compatible aliases.
+ *
+ * Existing pages/code may still call these names.
+ * They now control ONLY THIS workstation.
+ */
+window.activateAllScanners = window.activateScanner;
+window.deactivateAllScanners = window.deactivateScanner;
+
+window.enableAllScanners = window.activateScanner;
+window.disableAllScanners = window.deactivateScanner;

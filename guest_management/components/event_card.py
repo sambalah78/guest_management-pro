@@ -15,13 +15,14 @@ def event_card(event: dict) -> rx.Component:
 
     event_name = event.get("name", "Unnamed Event")
     company_name = event.get("company_name", "")
-    event_date = event.get("date", "Date TBD")
-    event_time = event.get("time", "Time TBD")
+    event_date = event.get("formatted_date", "Date TBD")
+    event_time = event.get("formatted_time", "Time TBD")
+    formatted_created_at = event.get("formatted_created_at", "")
     event_venue = event.get("venue", "Venue TBD")
     event_id = event.get("id", "")
     guest_count = event.get("guest_count", 0)
     present_count = event.get("present_count", 0)
-    created_at = event.get("created_at", "")
+
 
     return rx.card(
         rx.vstack(
@@ -49,7 +50,7 @@ def event_card(event: dict) -> rx.Component:
             ),
             rx.vstack(
                 rx.hstack(
-                    rx.icon("calendar", size=14, color=DARK_GRAY),
+                    rx.icon("calendar", size=14, color=LIGHT_GRAY),
                     rx.text(event_date, size="1", color="white"),
                     spacing="1",
                     align="center",
@@ -99,9 +100,9 @@ def event_card(event: dict) -> rx.Component:
                 wrap="wrap",
             ),
             rx.cond(
-                created_at != "",
+                formatted_created_at != "",
                 rx.text(
-                    f"Created: {created_at}",
+                    f"Created: {formatted_created_at}",
                     font_size="0.7em",
                     color=LIGHT_GRAY,
                 ),

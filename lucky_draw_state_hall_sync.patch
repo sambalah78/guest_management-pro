@@ -1,0 +1,30 @@
+*** Update File: guest_management/state/lucky_draw_state.py
+
+1) In _select_candidate(), immediately after:
+    self.candidate_rejected = False
+
+change:
+    yield
+
+to:
+    yield self.broadcast_lucky_draw_state()
+
+2) In advance_to_next_prize(), after:
+    self.lucky_draw_current_id = ""
+
+change:
+    yield
+
+to:
+    yield self.broadcast_lucky_draw_state()
+
+3) In the DONE branch of advance_to_next_prize(), before:
+    yield rx.toast.success(
+        "All prizes have been awarded!"
+    )
+
+add:
+    yield self.broadcast_lucky_draw_state()
+
+These broadcasts are required because the hall is a separate browser window.
+They make CANDIDATE, NEXT_PRIZE/READY, and DONE transitions visible to the hall.

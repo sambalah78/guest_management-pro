@@ -1,15 +1,15 @@
-from .core.config import settings
-from .database import init_db
+from guest_management.core.config import settings
+from guest_management.database import init_db
 
 # guest_management.py
 import reflex as rx
-from .auth_api import api as auth_api
+from guest_management.auth_api import api as auth_api
 
-from .pages  import (
+from guest_management.pages import (
     home_page, sign_in, events, create_event,
     dashboard, check_in, success, already_checked, scanner, lucky_draw,
     voucher_manager, stall_landing, stall_menu, scanner_guest, about,
-    products, contact, print_qr, select_event_type, lucky_draw_display, splash, health, lucky_draw_predraw, pre_draw_display
+    products, contact, print_qr, select_event_type, lucky_draw_display, pre_draw_display, splash, health, lucky_draw_external_display
 
 )
 if settings.is_production:
@@ -17,7 +17,7 @@ if settings.is_production:
 else:
     init_db()
 
-from .state import (
+from guest_management.state import (
     GuestState, EventState, ScannerState, SuccessState, LuckyDrawState,
     AuthState, EmailState, VoucherState, UIState
 )
@@ -38,7 +38,7 @@ app = rx.App(
         rx.script(
             "const link = document.createElement('link');"
             "link.rel = 'icon';"
-            "link.href = '/logo.png';"
+            "link.href = '/logo1.png';"
             "link.type = 'image/png';"
             "document.head.appendChild(link);"
         ),
@@ -53,12 +53,23 @@ app.add_page(home_page.home, route="/home")
 app.add_page(sign_in.login_page, route="/login")
 app.add_page(events.events_page, route="/events", on_load=[AuthState.check_auth, EventState.load_events])
 app.add_page(create_event.create_event_page, route="/create-event", on_load=AuthState.check_auth)
-app.add_page(dashboard.dashboard, route="/dashboard/[event_id]", on_load=[AuthState.check_auth, GuestState.load_guests])
+app.add_page(
+    dashboard.dashboard,
+    route="/dashboard/[event_id]",
+    on_load=[
+        AuthState.check_auth,
+        EventState.load_event_from_url,
+        GuestState.load_guests,
+    ],
+)
 app.add_page(
     check_in.checkin_page,
     route="/checkin/[event_id]",
-    on_load=AuthState.check_auth,
-    title="Manual Check-In"
+    on_load=[
+        AuthState.check_auth,
+        GuestState.set_current_event_from_url,
+    ],
+    title="Manual Check-In",
 )
 
 # Scanner routes - Use ScannerState
@@ -112,13 +123,15 @@ app.add_page(stall_menu.stall_menu, route="/stall/menu", on_load=[VoucherState.s
 # Lucky draw
 app.add_page(
     lucky_draw.lucky_draw_page,
+    route="/lucky-draw",
+    on_load=[AuthState.check_auth, GuestState.load_guests, GuestState.load_lucky_draw_eligible_guests, GuestState.load_winners],
+    title="Lucky Draw"
+)
+app.add_page(
+    lucky_draw.lucky_draw_page,
     route="/lucky-draw/[event_id]",
-    on_load=[
-        AuthState.check_auth,
-        LuckyDrawState.initialize_lucky_draw_event,
-        LuckyDrawState.load_winners,
-    ],
-    title="Lucky Draw Dashboard",
+    on_load=[AuthState.check_auth, LuckyDrawState.initialize_lucky_draw_event],
+    title="Lucky Draw"
 )
 
 app.add_page(rx.fragment(), route="/checkin-handler", on_load=ScannerState.handle_scan)
@@ -130,24 +143,21 @@ app.add_page(
 )
 app.add_page(select_event_type.select_event_type_page, route="/select-event-type", title="Select Event Type")
 app.add_page(
-    lucky_draw_display.lucky_draw_display_page,
-    route="/lucky-draw-display",
-    on_load=[
-        AuthState.check_auth,
-        LuckyDrawState.load_lucky_draw_display_data,
-    ],
-    title="Lucky Draw Display",
-)
-app.add_page(
-    lucky_draw_predraw.lucky_draw_predraw_page,
-    route="/lucky-draw-predraw",
-    title="Lucky Draw Pre-Draw",
-)
-app.add_page(
     pre_draw_display.pre_draw_display_page,
     route="/lucky-draw/pre-draw-display",
     title="Pre-Draw Display",
-    on_load=LuckyDrawState.load_pre_draw_display_participants,
+    on_load=LuckyDrawState.initialize_pre_draw_display,
+)
+app.add_page(
+    lucky_draw_display.lucky_draw_display_page,
+    route="/lucky-draw-display",
+    title="Lucky Draw Display",
+    on_load=LuckyDrawState.load_lucky_draw_display_data,
+)
+app.add_page(
+    lucky_draw_external_display.lucky_draw_external_display_page,
+    route="/lucky-draw/external-display/[event_id]",
+    title="Lucky Draw External Display",
 )
 app.add_page(about.about_page, route="/about", title="About - EventLah")
 app.add_page(products.products_page, route="/products", title="Products - EventLah")

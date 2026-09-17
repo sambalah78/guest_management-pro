@@ -1,5 +1,4 @@
-"""
-Durable SendGrid email worker.
+"""Durable Gmail email worker.
 
 Run:
 
@@ -8,48 +7,38 @@ Run:
 The worker:
 1. Claims queued email jobs.
 2. Generates the guest QR code.
-3. Creates a SendGrid email.
-4. Adds the QR as an inline attachment.
-5. Sends the email.
-6. Marks the job sent.
-7. Marks the guest email_sent=True.
-8. Retries failures.
+3. Creates a Gmail SMTP email.
+4. Adds the QR as an inline MIME image.
+5. Adds event branding from storage.
+6. Sends the email through Gmail SMTP.
+7. Marks the job sent.
+8. Marks the guest email_sent=True.
+9. Retries eligible failures.
 """
 
 from __future__ import annotations
 
-import base64
 import io
 import logging
 import os
+import smtplib
 import time
+
+logger = logging.getLogger(__name__)
+from email.message import EmailMessage
+from email.utils import formataddr
 from typing import Any, Dict, Optional
 
 import qrcode
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import (
-    Attachment,
-    Content,
-    Disposition,
-    FileContent,
-    FileName,
-    FileType,
-    Mail,
-)
 
 from guest_management.core.config import settings
 from guest_management.repositories.email_job_repository import (
     EmailJobRepository,
 )
-from guest_management.services.email_service import EmailService
-
-logger = logging.getLogger("eventlah.email_worker")
-
 from guest_management.repositories.event_repository import EventRepository
 from guest_management.repositories.guest_repository import GuestRepository
-from guest_management.services.google_drive_asset_service import (
-    GoogleDriveAssetService,
-)
+from guest_management.services.storage_service import StorageService
+
 class EmailWorker:
 
     def __init__(
@@ -70,42 +59,35 @@ class EmailWorker:
         self.repo = EmailJobRepository()
         self.event_repo = EventRepository()
         self.guest_repo = GuestRepository()
+        self.storage_service = StorageService()
 
-        api_key = (
-                getattr(
-                    settings,
-                    "sendgrid_api_key",
-                    None,
-                )
-                or os.getenv("SENDGRID_API_KEY")
-                or ""
-        ).strip()
+        provider = getattr(
+            settings,
+            "email_provider",
+            "gmail",
+        ).strip().lower()
 
-        sender = (
-                getattr(
-                    settings,
-                    "sender_email",
-                    None,
-                )
-                or os.getenv("SENDER_EMAIL")
-                or ""
-        ).strip()
-
-        if not api_key:
+        if provider != "gmail":
             raise RuntimeError(
-                "SENDGRID_API_KEY is not configured"
+                f"Unsupported email provider: {provider}"
             )
 
-        if not sender:
+        if not settings.smtp_username:
+            raise RuntimeError(
+                "SMTP_USERNAME is not configured"
+            )
+
+        if not settings.smtp_password:
+            raise RuntimeError(
+                "SMTP_PASSWORD is not configured"
+            )
+
+        if not settings.sender_email:
             raise RuntimeError(
                 "SENDER_EMAIL is not configured"
             )
 
-        self.sender = sender
-
-        self.client = SendGridAPIClient(
-            api_key
-        )
+        self.sender = settings.sender_email
 
         logger.info(
             "Email worker initialized "
@@ -195,74 +177,34 @@ class EmailWorker:
 
         return buffer.getvalue()
 
-    def _get_drive_service_for_event(
+    def _add_storage_asset(
             self,
-            event_id: int,
-    ) -> GoogleDriveAssetService:
-        """
-        Create a Google Drive service authenticated as the
-        owner of the specified EventLah event.
-        """
-
-        event_id = int(event_id)
-
-        user_id = self.event_repo.get_owner_user_id(
-            event_id
-        )
-
-        if not user_id:
-            raise RuntimeError(
-                f"Event {event_id} does not have a valid owner."
-            )
-
-        logger.debug(
-            "Creating Google Drive service for "
-            "event=%s owner=%s",
-            event_id,
-            user_id,
-        )
-
-        return GoogleDriveAssetService(
-            user_id=user_id
-        )
-
-    def _add_drive_asset(
-        self,
-        message: Mail,
-        event: Dict[str, Any],
-        *,
-        file_id_key: str,
-        filename_key: str,
-        mime_key: str,
-        content_id: str,
-        inline: bool,
+            message: EmailMessage,
+            event: Dict[str, Any],
+            *,
+            storage_path_key: str,
+            filename_key: str,
+            mime_key: str,
+            content_id: str,
+            inline: bool,
     ) -> bool:
-        """Download an event asset from Google Drive."""
+        """Download an event asset from Supabase Storage and add it to the email."""
 
-        file_id = str(
-            event.get(file_id_key) or ""
+        storage_path = str(
+            event.get(storage_path_key) or ""
         ).strip()
 
-        if not file_id:
+        if not storage_path:
             return False
 
         try:
-            drive_service = (
-                self._get_drive_service_for_event(
-                    int(event["id"])
-                )
-            )
-
-            data = drive_service.download_bytes(
-                file_id
-            )
+            data = self.storage_service.download(storage_path)
 
             if not data:
                 logger.warning(
-                    "Event asset is empty: "
-                    "event=%s file=%s",
+                    "Event asset is empty: event=%s path=%s",
                     event["id"],
-                    file_id,
+                    storage_path,
                 )
                 return False
 
@@ -276,41 +218,45 @@ class EmailWorker:
                 or "application/octet-stream"
             ).strip()
 
-            attachment = Attachment()
-
-            attachment.file_content = FileContent(
-                base64.b64encode(data).decode("ascii")
-            )
-
-            attachment.file_type = FileType(
-                mime_type
-            )
-
-            attachment.file_name = FileName(
-                filename
+            maintype, subtype = (
+                mime_type.split("/", 1)
+                if "/" in mime_type
+                else ("application", "octet-stream")
             )
 
             if inline:
-                attachment.disposition = (
-                    Disposition("inline")
-                )
-                attachment.content_id = (
-                    content_id
-                )
-            else:
-                attachment.disposition = (
-                    Disposition("attachment")
+                # Add inline asset to the HTML/related part.
+                payload = message.get_payload()
+
+                if not isinstance(payload, list) or len(payload) < 2:
+                    raise RuntimeError(
+                        "Email message does not contain an HTML part"
+                    )
+
+                html_part = payload[-1]
+
+                html_part.add_related(
+                    data,
+                    maintype=maintype,
+                    subtype=subtype,
+                    cid=f"<{content_id}>",
+                    filename=filename,
                 )
 
-            message.add_attachment(
-                attachment
-            )
+            else:
+                # Regular attachment on the root email.
+                message.add_attachment(
+                    data,
+                    maintype=maintype,
+                    subtype=subtype,
+                    filename=filename,
+                )
 
             logger.info(
-                "Event asset added: "
-                "event=%s file=%s filename=%s inline=%s",
+                "Event storage asset added: "
+                "event=%s path=%s filename=%s inline=%s",
                 event["id"],
-                file_id,
+                storage_path,
                 filename,
                 inline,
             )
@@ -319,55 +265,52 @@ class EmailWorker:
 
         except Exception:
             logger.exception(
-                "Failed to add event asset: "
-                "event=%s file=%s",
+                "Failed to add event storage asset: "
+                "event=%s path=%s",
                 event.get("id"),
-                file_id,
+                storage_path,
             )
             return False
 
-
     def _add_event_branding(
         self,
-        message: Mail,
+        message: EmailMessage,
         event: Dict[str, Any],
     ) -> tuple[bool, bool]:
         """
-        Add the event logo and invitation from Google Drive.
+        Add the event logo and invitation from Supabase Storage.
 
         Returns:
-            (logo_added, invitation_added)
+        (logo_added, invitation_added)
         """
 
-        logo_added = self._add_drive_asset(
+        logo_added = self._add_storage_asset(
             message,
             event,
-            file_id_key="logo_drive_file_id",
+            storage_path_key="logo_storage_path",
             filename_key="logo_filename",
             mime_key="logo_mime_type",
             content_id="event-logo",
             inline=True,
         )
 
-        invitation_file_id = str(
-            event.get("invitation_drive_file_id")
-            or ""
+        invitation_storage_path = str(
+            event.get("invitation_storage_path") or ""
         ).strip()
 
         invitation_mime = str(
-            event.get("invitation_mime_type")
-            or ""
+            event.get("invitation_mime_type") or ""
         ).strip().lower()
 
         invitation_inline = bool(
-            invitation_file_id
+            invitation_storage_path
             and invitation_mime.startswith("image/")
         )
 
-        invitation_added = self._add_drive_asset(
+        invitation_added = self._add_storage_asset(
             message,
             event,
-            file_id_key="invitation_drive_file_id",
+            storage_path_key="invitation_storage_path",
             filename_key="invitation_filename",
             mime_key="invitation_mime_type",
             content_id="event-invitation",
@@ -380,229 +323,102 @@ class EmailWorker:
         )
 
     # ================================================================
-    # BUILD SENDGRID MESSAGE
+    # BUILD GMAIL MESSAGE
     # ================================================================
 
     def build_message(
-        self,
-        job: Dict[str, Any],
-    ) -> Mail:
+            self,
+            job: Dict[str, Any],
+    ) -> EmailMessage:
+        event_id = int(job["event_id"])
+        guest_id = str(job["guest_id"])
 
-        event_id = int(
-            job["event_id"]
-        )
-
-        guest_id = str(
-            job["guest_id"]
-        )
-
-        recipient = str(
-            job["recipient"]
-        ).strip()
-
+        recipient = str(job["recipient"]).strip()
         subject = str(
-            job.get("subject")
-            or "Event Invitation"
+            job.get("subject") or "Event Invitation"
         )
 
         html_content = str(
-            job.get("html_content")
-            or ""
+            job.get("html_content") or ""
         )
 
         plain_text = str(
-            job.get("plain_text")
-            or ""
+            job.get("plain_text") or ""
         )
 
-        event = (
-            self.event_repo.get_by_id_public(
-                event_id
-            )
+        message = EmailMessage()
+
+        message["From"] = formataddr(
+            ("EventLah Solutions", self.sender)
         )
-
-        if not event:
-            raise RuntimeError(
-                f"Event {event_id} not found"
-            )
-
-        message = Mail(
-            from_email=self.sender,
-            to_emails=recipient,
-            subject=subject,
-        )
-
-        logo_added, invitation_added = (
-            self._add_event_branding(
-                message,
-                event,
-            )
-        )
-
-        # If an asset was unavailable, remove its
-        # corresponding HTML block rather than leaving
-        # a broken CID image.
-
-        if not logo_added:
-            logo_html = EmailService._logo_html(
-                event
-            )
-
-            if logo_html:
-                html_content = html_content.replace(
-                    logo_html,
-                    "",
-                )
-
-        if not invitation_added:
-            invitation_html = (
-                EmailService._invitation_html(
-                    event
-                )
-            )
-
-            if invitation_html:
-                html_content = html_content.replace(
-                    invitation_html,
-                    "",
-                )
+        message["To"] = recipient
+        message["Subject"] = subject
 
         if plain_text:
-            message.add_content(
-                Content(
-                    "text/plain",
-                    plain_text,
-                )
-            )
+            message.set_content(plain_text)
 
-        if html_content:
-            message.add_content(
-                Content(
-                    "text/html",
-                    html_content,
-                )
-            )
-
-        # ----------------------------------------------------------
-        # Personal guest QR
-        # ----------------------------------------------------------
+        message.add_alternative(
+            html_content,
+            subtype="html",
+        )
 
         qr_png = self.build_qr_png(
             event_id=event_id,
             guest_id=guest_id,
         )
 
-        qr_attachment = Attachment()
-
-        qr_attachment.file_content = FileContent(
-            base64.b64encode(
-                qr_png
-            ).decode("ascii")
-        )
-
-        qr_attachment.file_type = FileType(
-            "image/png"
-        )
-
-        qr_attachment.file_name = FileName(
-            "eventlah-guest-qr.png"
-        )
-
-        qr_attachment.disposition = (
-            Disposition("inline")
-        )
-
-        qr_attachment.content_id = (
-            "guest-qr"
-        )
-
-        message.add_attachment(
-            qr_attachment
+        message.get_payload()[1].add_related(
+            qr_png,
+            maintype="image",
+            subtype="png",
+            cid="<guest-qr>",
+            filename="eventlah-guest-qr.png",
         )
 
         return message
-
     # ================================================================
     # SEND ONE
     # ================================================================
 
     def send_one(
-        self,
-        job: Dict[str, Any],
+            self,
+            job: Dict[str, Any],
     ) -> str:
-
-        job_id = int(
-            job["id"]
-        )
-
-        guest_id = str(
-            job["guest_id"]
-        )
-
-        recipient = str(
-            job["recipient"]
-        )
+        job_id = int(job["id"])
+        guest_id = str(job["guest_id"])
+        recipient = str(job["recipient"]).strip()
 
         logger.info(
-            "Sending email job=%s guest=%s recipient=%s",
+            "Sending Gmail email job=%s guest=%s recipient=%s",
             job_id,
             guest_id,
             recipient,
         )
 
-        message = self.build_message(
-            job
-        )
+        message = self.build_message(job)
 
-        response = self.client.send(
-            message
-        )
+        with smtplib.SMTP(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=30,
+        ) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.ehlo()
 
-        status_code = int(
-            response.status_code
-        )
-
-        # SendGrid accepted the message.
-        if 200 <= status_code < 300:
-
-            message_id = ""
-
-            try:
-                headers = (
-                    response.headers
-                    or {}
-                )
-
-                message_id = (
-                    headers.get(
-                        "X-Message-Id"
-                    )
-                    or headers.get(
-                        "x-message-id"
-                    )
-                    or ""
-                )
-            except Exception:
-                logger.debug(
-                    "Unable to read "
-                    "SendGrid message ID",
-                    exc_info=True,
-                )
-
-            logger.info(
-                "SendGrid accepted job=%s "
-                "status=%s message_id=%s",
-                job_id,
-                status_code,
-                message_id,
+            smtp.login(
+                settings.smtp_username,
+                settings.smtp_password,
             )
 
-            return message_id
+            smtp.send_message(message)
 
-        raise RuntimeError(
-            "SendGrid returned HTTP "
-            f"{status_code}"
+        logger.info(
+            "Gmail accepted email job=%s",
+            job_id,
         )
+
+        return ""
 
     # ================================================================
     # RUN ONCE
@@ -669,7 +485,7 @@ class EmailWorker:
                 # Retry policy
                 # ----------------------------------------------------
 
-                retry = attempts < 5
+                retry = attempts < settings.email_max_attempts
 
                 try:
 
@@ -736,17 +552,9 @@ class EmailWorker:
 def main():
 
     worker = EmailWorker(
-        batch_size=int(
-            os.getenv(
-                "EMAIL_WORKER_BATCH_SIZE",
-                "10",
-            )
-        ),
+        batch_size=settings.email_worker_batch_size,
         poll_seconds=int(
-            os.getenv(
-                "EMAIL_WORKER_POLL_SECONDS",
-                "5",
-            )
+            settings.email_worker_interval_seconds
         ),
     )
 

@@ -1,7 +1,7 @@
 # guest_management/pages/pre_draw_display.py
 """Fullscreen preliminary-winner presentation display."""
 
-
+import re
 import reflex as rx
 
 from ..state.lucky_draw_state import LuckyDrawState
@@ -52,7 +52,6 @@ def _participant_card(guest):
                 flex="1",
                 min_width="0",
             ),
-
             rx.cond(
                 guest.get("is_pre_draw_winner", False),
                 rx.box(
@@ -173,13 +172,7 @@ def _legend():
 def pre_draw_display_page():
     """Fullscreen presentation of all attending participants."""
 
-    return rx.box(rx.box(
-        rx.moment(
-            interval=LuckyDrawState.predraw_rotation_interval_ms,
-            on_change=LuckyDrawState.advance_predraw_page,
-        ),
-        display="none",
-    ),
+    return rx.box(
         rx.vstack(
             # Header
             rx.hstack(

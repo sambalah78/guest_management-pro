@@ -130,8 +130,36 @@ def _guest_list_card():
             rx.cond(
                 LuckyDrawState.lucky_draw_uses_attendance,
                 rx.vstack(
+                    rx.hstack(
+                        rx.switch(
+                            checked=LuckyDrawState.lucky_draw_only_present,
+                            on_change=LuckyDrawState.set_lucky_draw_only_present,
+                            color_scheme="amber",
+                        ),
+                        rx.vstack(
+                            rx.text(
+                                rx.cond(
+                                    LuckyDrawState.lucky_draw_only_present,
+                                    "Only include checked-in guests",
+                                    "Include all guests (including absent)",
+                                ),
+                                color="white",
+                                font_weight="700",
+                                font_size="0.78rem",
+                            ),
+                            rx.text(
+                                "Uses the guest list uploaded on the Dashboard.",
+                                color=LIGHT_GRAY,
+                                font_size="0.68rem",
+                            ),
+                            spacing="0",
+                        ),
+                        spacing="2",
+                        width="100%",
+                        align="center",
+                    ),
                     rx.text(
-                        "The same guest list is used for invitation emails. On event day, only guests who successfully check in are included in the Lucky Draw pool.",
+                        "The Lucky Draw uses the same guest records imported from the Dashboard Excel upload. Turn the switch off to include guests who did not check in.",
                         color=LIGHT_GRAY,
                         font_size="0.72rem",
                     ),
@@ -184,14 +212,213 @@ def _guest_list_card():
         width="100%",
     )
 
+def _pre_draw_winner_upload_dialog():
+    """Render the pre-draw winner upload dialog."""
+    return rx.dialog.root(
+        rx.dialog.trigger(
+            rx.button(
+                rx.hstack(
+                    rx.icon(tag="upload", size=15),
+                    rx.text("Upload / Manage"),
+                    spacing="2",
+                ),
+                bg=GOLD,
+                color=BLACK,
+                size="2",
+            ),
+        ),
+        rx.button(
+            rx.hstack(
+                rx.icon(tag="trash_2", size=16),
+                rx.text("CLEAR LIST"),
+                spacing="2",
+            ),
+            on_click=LuckyDrawState.clear_pre_draw_winners,
+            variant="outline",
+            border_color="red.500",
+            color="red.400",
+            size="2",
+        ),
+        rx.dialog.content(
+            rx.vstack(
+                rx.hstack(
+                    rx.icon(
+                        tag="trophy",
+                        size=22,
+                        color=GOLD,
+                    ),
+                    rx.heading(
+                        "Upload Pre-Draw Winners",
+                        size="5",
+                        color=GOLD,
+                    ),
+                    spacing="2",
+                    align="center",
+                ),
+
+                rx.text(
+                    "Upload the Excel file containing guests who have "
+                    "already won preliminary prizes.",
+                    color=LIGHT_GRAY,
+                    font_size="0.82rem",
+                ),
+
+                rx.divider(),
+
+                rx.upload(
+                    rx.vstack(
+                        rx.icon(
+                            tag="file-spreadsheet",
+                            size=30,
+                            color=GOLD,
+                        ),
+                        rx.text(
+                            "Select Excel File",
+                            color="white",
+                            font_weight="700",
+                        ),
+                        rx.text(
+                            "Drag and drop or click to browse",
+                            color=LIGHT_GRAY,
+                            font_size="0.72rem",
+                        ),
+                        spacing="2",
+                        align="center",
+                        justify="center",
+                        width="100%",
+                        padding="2em",
+                    ),
+                    id="pre_draw_winner_excel_upload",
+                    multiple=False,
+                    accept={
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+                        "application/vnd.ms-excel": [".xls"],
+                        "application/vnd.ms-excel.sheet.macroEnabled.12": [".xlsm"],
+                    },
+                    max_files=1,
+                    on_drop=LuckyDrawState.set_pre_draw_winner_file,
+                    border=f"1px dashed {GOLD}",
+                    border_radius="10px",
+                    width="100%",
+                ),
+
+                rx.cond(
+                    LuckyDrawState.pre_draw_winner_selected_file_name != "",
+                    rx.hstack(
+                        rx.icon(
+                            tag="file-text",
+                            size=16,
+                            color=GOLD,
+                        ),
+                        rx.text(
+                            LuckyDrawState.pre_draw_winner_selected_file_name,
+                            color=GOLD,
+                            font_size="0.82rem",
+                            flex="1",
+                        ),
+                        rx.button(
+                            rx.icon(
+                                tag="x",
+                                size=14,
+                            ),
+                            on_click=(
+                                LuckyDrawState.clear_pre_draw_winner_file
+                            ),
+                            variant="outline",
+                            border_color=GOLD,
+                            color=GOLD,
+                            size="1",
+                        ),
+                        width="100%",
+                        align="center",
+                        spacing="2",
+                        background=f"{GOLD}15",
+                        border_radius="8px",
+                        padding="0.7em",
+                    ),
+                    rx.text(
+                        "No file selected.",
+                        color="gray",
+                        font_size="0.72rem",
+                    ),
+                ),
+
+                rx.vstack(
+                    rx.text(
+                        "Required: Name, Guest ID",
+                        color="white",
+                        font_size="0.75rem",
+                        font_weight="600",
+                    ),
+                    rx.text(
+                        "Optional: Prize, Value, Image URL",
+                        color=LIGHT_GRAY,
+                        font_size="0.72rem",
+                    ),
+                    rx.text(
+                        "Uploading a new file replaces the existing "
+                        "pre-draw winner list.",
+                        color="gray",
+                        font_size="0.7rem",
+                    ),
+                    spacing="1",
+                    align="start",
+                    width="100%",
+                ),
+
+                rx.hstack(
+                    rx.button(
+                        "Cancel",
+                        on_click=LuckyDrawState.close_pre_draw_upload_dialog,
+                        variant="outline",
+                        border_color=GOLD,
+                        color=GOLD,
+                        size="2",
+                    ),
+                    rx.button(
+                        rx.hstack(
+                            rx.icon(
+                                tag="upload",
+                                size=15,
+                            ),
+                            rx.text("Import Winners"),
+                            spacing="2",
+                        ),
+                        on_click=(
+                            LuckyDrawState.process_pre_draw_winner_upload
+                        ),
+                        bg=GOLD,
+                        color=BLACK,
+                        size="2",
+                    ),
+                    justify="end",
+                    width="100%",
+                    spacing="2",
+                ),
+
+                spacing="4",
+                width="100%",
+            ),
+            background=DARK_GRAY,
+            border=f"1px solid {GOLD}",
+            border_radius="14px",
+            padding="1.5em",
+            max_width="600px",
+            width="95%",
+        ),
+        open=LuckyDrawState.pre_draw_upload_dialog_open,
+        on_open_change=LuckyDrawState.set_pre_draw_upload_dialog_open,
+    )
+
+
 def _pre_draw_winner_card():
-    """Pre-draw winner upload and status card."""
+    """Pre-draw winner management card."""
     return rx.card(
         rx.vstack(
             _section_header(
                 "trophy",
                 "Pre-Draw Winners",
-                "Upload guests who have already won preliminary prizes before the event.",
+                "Manage guests who have already won preliminary prizes.",
             ),
 
             rx.divider(),
@@ -212,118 +439,86 @@ def _pre_draw_winner_card():
                     spacing="0",
                     align="start",
                 ),
-
                 rx.spacer(),
-
-                rx.upload(
-                    rx.button(
-                        rx.hstack(
-                            rx.icon(
-                                tag="file-spreadsheet",
-                                size=16,
-                            ),
-                            rx.text("Upload Pre-Draw Winners"),
-                            spacing="2",
-                        ),
-                        bg=GOLD,
-                        color=BLACK,
-                        size="2",
-                    ),
-                    id="pre_draw_winner_excel_upload",
-                    multiple=False,
-                    accept={
-                        ".xlsx": (
-                            "application/vnd.openxmlformats-officedocument."
-                            "spreadsheetml.sheet"
-                        ),
-                        ".xls": "application/vnd.ms-excel",
-                        ".xlsm": (
-                            "application/vnd.ms-excel.sheet.macroEnabled.12"
-                        ),
-                    },
-                    max_files=1,
-                    on_drop=LuckyDrawState.set_pre_draw_winner_file,
-                ),
+_pre_draw_winner_upload_dialog(),
+                width="100%",
+                align="center",
             ),
 
             rx.cond(
-                LuckyDrawState.pre_draw_winner_selected_file_name != "",
+                LuckyDrawState.pre_draw_winner_filename != "",
                 rx.hstack(
                     rx.icon(
                         tag="file-text",
-                        size=14,
+                        size=15,
                         color=GOLD,
                     ),
-
-                    rx.text(
-                        LuckyDrawState.pre_draw_winner_selected_file_name,
-                        color=GOLD,
-                        font_size="0.78rem",
+                    rx.vstack(
+                        rx.text(
+                            "Imported file",
+                            color=LIGHT_GRAY,
+                            font_size="0.68rem",
+                        ),
+                        rx.text(
+                            LuckyDrawState.pre_draw_winner_filename,
+                            color=GOLD,
+                            font_size="0.8rem",
+                            font_weight="600",
+                        ),
+                        spacing="0",
+                        align="start",
                         flex="1",
                     ),
-
-                    rx.button(
-                        "Import Winners",
-                        on_click=(
-                            LuckyDrawState.process_pre_draw_winner_upload
-                        ),
-                        bg=GOLD,
-                        color=BLACK,
-                        size="1",
-                    ),
-
-                    rx.button(
-                        rx.icon(
-                            tag="x",
-                            size=13,
-                        ),
-                        on_click=(
-                            LuckyDrawState.clear_pre_draw_winner_file
-                        ),
-                        variant="outline",
-                        border_color=GOLD,
-                        color=GOLD,
-                        size="1",
-                    ),
-
                     width="100%",
                     align="center",
                     spacing="2",
                     background=f"{GOLD}15",
                     border_radius="8px",
-                    padding="0.6em",
+                    padding="0.7em",
                 ),
                 rx.text(
-                    "No new pre-draw winner file selected.",
+                    "No pre-draw winner file imported yet.",
                     color="gray",
                     font_size="0.72rem",
                 ),
             ),
 
-            rx.text(
-                "Required columns: Name, Guest ID. "
-                "Optional: Prize, Value, Image URL.",
-                color="gray",
-                font_size="0.72rem",
+            rx.button(
+                rx.hstack(
+                    rx.icon(
+                        tag="monitor",
+                        size=16,
+                    ),
+                    rx.text("Open Pre-Draw Display"),
+                    spacing="2",
+                ),
+                on_click=rx.redirect(
+                    f"/lucky-draw/pre-draw-display?event_id={LuckyDrawState.current_event_id}"
+                ),
+                variant="outline",
+                border_color=GOLD,
+                color=GOLD,
+                size="2",
+                width="100%",
             ),
 
             rx.text(
-                "Guest IDs must already exist in the attending guest list. "
-                "Uploading a new file replaces the existing pre-draw winner list.",
+                "The public display shows the event information and "
+                "pre-draw winner table.",
                 color="gray",
-                font_size="0.72rem",
+                font_size="0.7rem",
             ),
 
             spacing="4",
             width="100%",
         ),
-
         background=DARK_GRAY,
         border="1px solid rgba(212, 175, 55, 0.35)",
         border_radius="14px",
         padding=["1em", "1.25em"],
         width="100%",
     )
+
 
 def _prize_count():
     """Return the count for the currently selected prize input mode."""
@@ -389,6 +584,18 @@ def _prize_list_card():
                     },
                     max_files=1,
                     on_drop=LuckyDrawState.set_excel_prize_file,
+                ),
+                rx.button(
+                    rx.hstack(
+                        rx.icon(tag="trash_2", size=16),
+                        rx.text("CLEAR LIST"),
+                        spacing="2",
+                    ),
+                    on_click=LuckyDrawState.clear_excel_prizes,
+                    variant="outline",
+                    border_color="red.500",
+                    color="red.400",
+                    size="2",
                 ),
             ),
             rx.cond(
@@ -520,6 +727,28 @@ def _winner_history():
     )
 
 
+def _clear_history_dialog():
+    """Confirmation dialog for clearing persisted winner history."""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                rx.icon(tag="triangle-alert", size=40, color="red.400"),
+                rx.heading("Clear Winner History", size="5", color="red.400"),
+                rx.text("Remove all confirmed winners for this event?", color="white", text_align="center"),
+                rx.text("This cannot be undone.", color=LIGHT_GRAY, size="2"),
+                rx.hstack(
+                    rx.button("Cancel", on_click=LuckyDrawState.cancel_clear_winners, variant="outline", border_color=GOLD, color=GOLD, flex="1"),
+                    rx.button("Clear All", on_click=LuckyDrawState.confirm_clear_winners, background="red.500", color="white", flex="1", disabled=LuckyDrawState.is_loading),
+                    spacing="3", width="100%",
+                ),
+                spacing="4", padding="1.5em", align="center",
+            ),
+            background=DARK_GRAY, border="2px solid red", border_radius="15px", max_width="400px", width="90%",
+        ),
+        open=LuckyDrawState.show_clear_confirm,
+    )
+
+
 def _prize_configuration_dialog():
     """Render the existing prize manager in a dedicated configuration dialog."""
     return rx.dialog.root(
@@ -599,7 +828,7 @@ def _advanced_prize_setup():
 def lucky_draw_page():
     """Lucky Draw administration dashboard."""
     return rx.box(
-        rx.container(
+
             rx.vstack(
                 # Header ------------------------------------------------------
                 rx.hstack(
@@ -662,7 +891,7 @@ def lucky_draw_page():
                     _prize_list_card(),
                     columns=rx.breakpoints(
                         initial="1fr",
-                        lg="repeat(2, minmax(0, 1fr))",
+                        lg="repeat(3, minmax(0, 1fr))",
                     ),
                     spacing="4",
                     width="100%",
@@ -732,6 +961,20 @@ def lucky_draw_page():
                                 "transform": "translateY(-1px)",
                             },
                         ),
+                        rx.button(
+                            rx.hstack(
+                                rx.icon(tag="monitor", size=18),
+                                rx.text("OPEN HALL SCREEN"),
+                                spacing="2",
+                            ),
+                            on_click=LuckyDrawState.open_hall_screen,
+                            variant="outline",
+                            border_color=GOLD,
+                            color=GOLD,
+                            width="100%",
+                            size="3",
+                            padding="1em",
+                        ),
                         spacing="3",
                         width="100%",
                         align="center",
@@ -745,6 +988,7 @@ def lucky_draw_page():
 
                 _advanced_prize_setup(),
                 _winner_history(),
+                _clear_history_dialog(),
                 _prize_configuration_dialog(),
 
                 # Existing guest upload dialog remains available through the
@@ -756,9 +1000,7 @@ def lucky_draw_page():
                 width="100%",
                 max_width="1200px",
                 padding=["1em", "1.5em", "2em"],
-            ),
-            width="100%",
-            max_width="1200px",
+
         ),
         width="100%",
         min_height="100vh",

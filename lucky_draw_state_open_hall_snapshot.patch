@@ -1,0 +1,41 @@
+*** Begin Patch
+*** Update File: guest_management/state/lucky_draw_state.py
+@@
+     def open_hall_screen(self):
+         """Open the audience-only display in a separate browser window."""
+         event_id = str(self.current_event_id or "").strip()
+         if not event_id:
+             return rx.toast.error("No Lucky Draw event selected.")
++
++        import json
++
++        # Write the complete initial state before opening the popup. This
++        # removes the window.open/BroadcastChannel race without putting guest
++        # names or IDs into the browser URL/history.
++        payload = {
++            "event_id": str(self.current_event_id or ""),
++            "event_name": str(self.lucky_draw_event_name or ""),
++            "prize_name": str(self.lucky_draw_prize_name or ""),
++            "prize_value": str(self.lucky_draw_prize_value or ""),
++            "prize_picture": str(self.lucky_draw_prize_picture or ""),
++            "current_name": str(self.lucky_draw_current_name or ""),
++            "current_id": str(self.lucky_draw_current_id or ""),
++            "status": str(self.draw_status or ""),
++            "spinning": bool(self.lucky_draw_spinning),
++            "winners": [dict(w) for w in self.winners_list[:10] if isinstance(w, dict)],
++            "prize_index": int(self.current_prize_index or 0),
++            "prize_count": len(self.current_prizes),
++            "wheel_names": [str(n) for n in self.wheel_names[:24]],
++        }
++        encoded = json.dumps(
++            payload,
++            ensure_ascii=False,
++            separators=(",", ":"),
++        ).replace("\\", "\\\\").replace("'", "\\'")
++
+         open_script = rx.call_script(
+-            f"(() => {{ const w = window.open('/lucky-draw/external-display/{event_id}?state={encoded_state}', 'eventlahLuckyDrawExternal', 'popup=yes,width=1600,height=1000,resizable=yes,scrollbars=no'); if (w) w.focus(); }})()"
++            f"(() => {{ const state = JSON.parse('{encoded}'); localStorage.setItem('eventlah-lucky-draw-state', JSON.stringify(state)); const w = window.open('/lucky-draw/external-display/{event_id}', 'eventlahLuckyDrawExternal', 'popup=yes,width=1600,height=1000,resizable=yes,scrollbars=no'); if (w) w.focus(); }})()"
+         )
+         return [open_script, self.broadcast_lucky_draw_state()]
+*** End Patch

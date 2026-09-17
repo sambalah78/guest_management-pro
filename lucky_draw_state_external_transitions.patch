@@ -1,0 +1,24 @@
+*** Begin Patch
+*** Update File: guest_management/state/lucky_draw_state.py
+@@
+         self.draw_status = CANDIDATE
+         self.candidate_rejected = False
+
++        yield self.broadcast_lucky_draw_state()
+         yield
+@@
+             self.draw_finished = True
+             self.waiting_for_next_prize = False
+             self.lucky_draw_spinner_open = False
++
++            yield self.broadcast_lucky_draw_state()
+
+             yield rx.toast.success(
+                 "All prizes have been awarded!"
+@@
+         self.lucky_draw_current_name = ""
+         self.lucky_draw_current_id = ""
+
++        yield self.broadcast_lucky_draw_state()
+         yield
+*** End Patch

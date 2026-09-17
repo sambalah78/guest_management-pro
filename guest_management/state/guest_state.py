@@ -6,6 +6,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import json
 import base64
+import re
 import hashlib
 import time
 import os
@@ -18,8 +19,19 @@ from PIL import Image
 from guest_management.database_client import get_db
 import logging
 from guest_management.services.checkin_service import CheckinService
-logger = logging.getLogger(__name__)
+from guest_management.services.qr_service import QRService
+from guest_management.repositories import GuestRepository
 
+logger = logging.getLogger(__name__)
+from guest_management.repositories import EventRepository
+from guest_management.services.guest_service import GuestService
+from guest_management.services.storage_service import StorageService
+from guest_management.state.auth_state import AuthState
+from guest_management.services.event_service import EventService
+from guest_management.core.exceptions import (
+    AuthorizationError,
+    EventNotFoundError, GuestAlreadyCheckedInError,
+)
 
 class GuestState(rx.State):
     """Guest management state - fully self-contained."""
@@ -85,6 +97,13 @@ class GuestState(rx.State):
     checkin_message: str = ""
     checkin_success: bool = False
     manual_checkin_open: bool = False
+    no_id_verification_open: bool = False
+    no_id_name: str = ""
+    no_id_email: str = ""
+    no_id_phone: str = ""
+    no_id_table_number: str = "TBD"
+    no_id_team_name: str = ""
+    no_id_client_confirmed: bool = False
     use_camera: bool = True
 
     # ========================================================================
@@ -237,8 +256,7 @@ class GuestState(rx.State):
     async def load_guests(self):
         """Load one page of guests through the production repository layer."""
         try:
-            from guest_management.state.auth_state import AuthState
-            from guest_management.repositories import EventRepository, GuestRepository
+
 
             auth = await self.get_state(AuthState)
             if not auth.user_id:
@@ -249,7 +267,7 @@ class GuestState(rx.State):
             self.user_id = auth.user_id
             self.is_authenticated = True
 
-            import re
+
             path = getattr(self.router.url, "path", "") or ""
             match = re.search(r"/dashboard/(\d+)", path)
             if match:
@@ -262,8 +280,16 @@ class GuestState(rx.State):
                 return
 
             event_id = int(self.current_event_id)
-            event = EventRepository().get_by_id(event_id, auth.user_id)
-            if not event:
+
+
+
+            try:
+                event = EventService().get_event(
+                    event_id,
+                    auth.user_id,
+                    auth.user,
+                )
+            except (AuthorizationError, EventNotFoundError):
                 self.guest_data = []
                 self.filtered_data = []
                 yield rx.toast.error("Event not found or access denied")
@@ -273,7 +299,8 @@ class GuestState(rx.State):
             self.current_event = event
             self.event_type = event.get("event_type", "company_dinner")
             repo = GuestRepository()
-            guests, total = repo.get_by_event(event_id, limit=min(max(self.items_per_page, 1), 200), offset=max(0, (self.current_page - 1) * self.items_per_page))
+            guests, total = repo.get_by_event(event_id, limit=min(max(self.items_per_page, 1), 200),
+                                              offset=max(0, (self.current_page - 1) * self.items_per_page))
 
             processed = []
             has_amount = False
@@ -419,14 +446,41 @@ class GuestState(rx.State):
                 yield update
             return
         try:
-            from guest_management.repositories import EventRepository, GuestRepository
-            from guest_management.state.auth_state import AuthState
+
             auth = await self.get_state(AuthState)
-            event_id = int(self.current_event_id)
-            if not EventRepository().get_by_id(event_id, auth.user_id):
+
+            if not auth.user_id:
+                yield rx.toast.error("Please log in again.")
+                yield rx.redirect("/login")
+                return
+
+            try:
+                event_id = int(self.current_event_id)
+            except (TypeError, ValueError):
+                yield rx.toast.error("Invalid event.")
+                return
+
+            from guest_management.services.event_service import EventService
+            from guest_management.core.exceptions import (
+                AuthorizationError,
+                EventNotFoundError,
+            )
+
+            try:
+                EventService().get_event(
+                    event_id,
+                    auth.user_id,
+                    auth.user,
+                )
+            except (AuthorizationError, EventNotFoundError):
                 yield rx.toast.error("Event not found or access denied")
                 return
-            rows = GuestRepository().search(event_id, self.search_query, limit=50)
+
+            rows = GuestRepository().search(
+                event_id,
+                self.search_query,
+                limit=50,
+            )
             self.guest_data = [
                 {
                     "Name": row.get("name", ""),
@@ -507,52 +561,99 @@ class GuestState(rx.State):
     # ========================================================================
 
     async def handle_manual_checkin(self):
-        """Manual check-in using event-scoped ID or database search."""
-        if not self.manual_name.strip() and not self.manual_guest_id.strip():
-            yield rx.toast.error("Please enter either Name or ID")
+        """Handle event-day manual check-in for missing QR/email/ID cases.
+
+        Existing guests are always resolved from the uploaded guest list.
+        A new guest is created only through the explicit no-ID verification flow.
+        """
+        name = self.manual_name.strip()
+        guest_id = self.manual_guest_id.strip()
+
+        if not name and not guest_id:
+            yield rx.toast.error("Please enter a Name or ID")
             return
         if not self.current_event_id:
             yield rx.toast.error("No event selected")
             return
+
         self.is_loading = True
         yield
         try:
-            from guest_management.repositories import EventRepository, GuestRepository
-            from guest_management.state.auth_state import AuthState
             auth = await self.get_state(AuthState)
-            event = EventRepository().get_by_id(int(self.current_event_id), auth.user_id)
-            if not event:
-                raise ValueError("Event not found or access denied")
+            EventService().get_event(
+                int(self.current_event_id),
+                auth.user_id,
+                auth.user,
+            )
+
+            event_id = int(self.current_event_id)
             repo = GuestRepository()
-            guest = repo.get_by_guest_id(self.manual_guest_id.strip(), int(self.current_event_id)) if self.manual_guest_id.strip() else None
-            if not guest and self.manual_name.strip():
-                matches = repo.search(int(self.current_event_id), self.manual_name.strip(), limit=10)
-                if matches:
+            guest = None
+
+            # ID is authoritative when supplied. Never create a replacement
+            # guest when an entered ID does not exist in the uploaded list.
+            if guest_id:
+                guest = repo.get_by_guest_id(guest_id, event_id)
+                if not guest:
+                    yield rx.toast.error(
+                        f"Guest ID '{guest_id}' was not found in the uploaded guest list."
+                    )
+                    return
+
+            # Name lookup is only for the missing-QR / no-email cases.
+            if not guest and name:
+                matches = repo.search(event_id, name, limit=10)
+                if len(matches) == 1:
                     guest = matches[0]
+                elif len(matches) > 1:
+                    yield rx.toast.warning(
+                        "Multiple guests match this name. Please enter the Guest ID."
+                    )
+                    return
+
+            # No matching uploaded guest: only a name-only request may enter
+            # the explicit client-verification flow.
             if not guest:
-                self.checkin_message = "Guest not found"
-                yield rx.toast.error("Guest not found")
+                if guest_id:
+                    yield rx.toast.error("Guest ID was not found in the uploaded guest list.")
+                    return
+                self.no_id_name = name
+                self.no_id_email = ""
+                self.no_id_phone = ""
+                self.no_id_table_number = "TBD"
+                self.no_id_team_name = ""
+                self.no_id_client_confirmed = False
+                self.no_id_verification_open = True
+                yield rx.toast.warning(
+                    "This person is not in the uploaded guest list. Client/staff verification is required before registration."
+                )
                 return
 
             result = CheckinService().check_in(
-                int(self.current_event_id),
+                event_id,
                 guest["guest_id"],
                 "MANUAL",
+                manual=True,
             )
-            self.checkin_guest_name = str(result.get("guest_name") or guest.get("name") or "Guest")
-            self.checkin_table_number = str(result.get("table_number") or guest.get("table_number") or "TBD")
-            self.checkin_team_name = str(result.get("team_name") or guest.get("team_name") or "")
-            self.present_count = int(result.get("present_count") or self.present_count)
-            self.total_guests = int(result.get("total_guests") or self.total_guests)
-            self.absent_count = max(0, self.total_guests - self.present_count)
-            self.manual_name = ""
-            self.manual_guest_id = ""
-            if result.get("result") == "already_checked_in":
-                yield rx.toast.warning(f"{self.checkin_guest_name} is already checked in")
-            else:
-                yield rx.toast.success(f"Welcome, {self.checkin_guest_name}!")
-            async for update in self.load_guests():
-                yield update
+            self._apply_manual_checkin_result(result, guest)
+
+            # Use the server-generated signed receipt token so the success
+            # page can verify the manual check-in just like a QR check-in.
+            receipt_token = str(result.get("receipt_token") or "").strip()
+            if not receipt_token:
+                receipt_token = create_qr_token(event_id, guest["guest_id"])
+
+            from urllib.parse import quote
+
+            yield rx.redirect(
+                f"/success/{event_id}"
+                f"?guest_id={quote(str(guest['guest_id']))}"
+                f"&token={quote(receipt_token)}"
+            )
+            return
+        except (AuthorizationError, EventNotFoundError):
+            logger.exception("Manual check-in authorization failed")
+            yield rx.toast.error("Event not found or access denied")
         except Exception:
             logger.exception("Manual check-in failed")
             yield rx.toast.error("Check-in failed. Please try again.")
@@ -560,11 +661,159 @@ class GuestState(rx.State):
             self.is_loading = False
             yield
 
+    def _apply_manual_checkin_result(self, result: dict, guest: dict):
+        """Apply a successful manual check-in result to state."""
+        self.checkin_guest_name = str(
+            result.get("guest_name") or guest.get("name") or "Guest"
+        )
+        self.checkin_table_number = str(
+            result.get("table_number") or guest.get("table_number") or "TBD"
+        )
+        self.checkin_team_name = str(
+            result.get("team_name") or guest.get("team_name") or ""
+        )
+        self.present_count = int(result.get("present_count") or self.present_count)
+        self.total_guests = int(result.get("total_guests") or self.total_guests)
+        self.absent_count = max(0, self.total_guests - self.present_count)
+        self.manual_name = ""
+        self.manual_guest_id = ""
+
+    async def confirm_no_id_guest(self):
+        """Register and check in a person whose client-issued ID is unavailable."""
+        name = self.no_id_name.strip()
+        if not name:
+            yield rx.toast.error("Please enter the person's full name")
+            return
+        if not self.no_id_client_confirmed:
+            yield rx.toast.error("Please confirm with the client that this is their staff member")
+            return
+        if not self.current_event_id:
+            yield rx.toast.error("No event selected")
+            return
+
+        self.is_loading = True
+        yield
+        try:
+            auth = await self.get_state(AuthState)
+            EventService().get_event(
+                int(self.current_event_id),
+                auth.user_id,
+                auth.user,
+            )
+            event_id = int(self.current_event_id)
+            repo = GuestRepository()
+
+            # Re-check by name immediately before insert to reduce accidental
+            # duplicate registrations if another operator registered the person.
+            matches = repo.search(event_id, name, limit=10)
+            if matches:
+                if len(matches) == 1:
+                    guest = matches[0]
+                    result = CheckinService().check_in(event_id, guest["guest_id"], "MANUAL")
+                    self._apply_manual_checkin_result(result, guest)
+                    self.no_id_verification_open = False
+                    yield rx.toast.warning(
+                        f"Existing guest found. {self.checkin_guest_name} checked in."
+                    )
+                    async for update in self.load_guests():
+                        yield update
+                    return
+                yield rx.toast.error(
+                    "Multiple guests with this name already exist. Do not create another record; use the Guest ID."
+                )
+                return
+
+            import uuid
+            internal_guest_id = f"NO-ID-{uuid.uuid4().hex[:10].upper()}"
+            guest_url = QRService().guest_url(internal_guest_id, event_id)
+            full_data = {
+                "source": "manual_no_id_registration",
+                "id_status": "NO_ID",
+                "client_staff_verified": True,
+                "client_verification_note": "Verified by event staff with client",
+            }
+
+            new_guest = {
+                "event_id": event_id,
+                "guest_id": internal_guest_id,
+                "name": name,
+                "email": self.no_id_email.strip(),
+                "phone": self.no_id_phone.strip(),
+                "status": "Absent",
+                "table_number": self.no_id_table_number.strip() or "TBD",
+                "amount": 0,
+                "team_name": self.no_id_team_name.strip() or None,
+                "qr_code": guest_url,
+                "qr_url": guest_url,
+                "email_sent": False,
+                "full_data": json.dumps(full_data, ensure_ascii=False),
+            }
+
+            created = repo.create_batch([new_guest], batch_size=1)
+            if created != 1:
+                raise ValueError("Unable to register the no-ID guest")
+
+            guest = repo.get_by_guest_id(internal_guest_id, event_id)
+            if not guest:
+                raise ValueError("No-ID guest registration could not be verified")
+
+            result = CheckinService().check_in(event_id, internal_guest_id, "MANUAL")
+            self._apply_manual_checkin_result(result, guest)
+            self.no_id_verification_open = False
+            self.no_id_name = ""
+            self.no_id_email = ""
+            self.no_id_phone = ""
+            self.no_id_table_number = "TBD"
+            self.no_id_team_name = ""
+            self.no_id_client_confirmed = False
+
+            if result.get("result") == "already_checked_in":
+                yield rx.toast.warning(f"{self.checkin_guest_name} is already checked in")
+            else:
+                yield rx.toast.success(
+                    f"{self.checkin_guest_name} registered and checked in successfully."
+                )
+            async for update in self.load_guests():
+                yield update
+        except (AuthorizationError, EventNotFoundError):
+            logger.exception("No-ID guest authorization failed")
+            yield rx.toast.error("Event not found or access denied")
+        except Exception:
+            logger.exception("No-ID guest registration failed")
+            yield rx.toast.error("Unable to register and check in this guest.")
+        finally:
+            self.is_loading = False
+            yield
+
+    def cancel_no_id_verification(self):
+        self.no_id_verification_open = False
+        self.no_id_name = ""
+        self.no_id_email = ""
+        self.no_id_phone = ""
+        self.no_id_table_number = "TBD"
+        self.no_id_team_name = ""
+        self.no_id_client_confirmed = False
+
     def set_manual_name(self, value: str):
         self.manual_name = value
 
     def set_manual_guest_id(self, value: str):
         self.manual_guest_id = value
+
+    def set_no_id_email(self, value: str):
+        self.no_id_email = value
+
+    def set_no_id_phone(self, value: str):
+        self.no_id_phone = value
+
+    def set_no_id_table_number(self, value: str):
+        self.no_id_table_number = value
+
+    def set_no_id_team_name(self, value: str):
+        self.no_id_team_name = value
+
+    def set_no_id_client_confirmed(self, value: bool):
+        self.no_id_client_confirmed = value
 
     def open_manual_checkin(self):
         self.manual_checkin_open = True
@@ -575,6 +824,7 @@ class GuestState(rx.State):
         self.manual_guest_id = ""
         self.checkin_message = ""
         self.checkin_success = False
+        self.cancel_no_id_verification()
 
     def toggle_checkin_mode(self):
         self.use_camera = not self.use_camera
@@ -611,18 +861,15 @@ class GuestState(rx.State):
     async def handle_upload(self):
         """
         Import a guest list into the database and archive the original
-        uploaded file in Google Drive.
+        uploaded file in Supabase Storage.
 
         Architecture:
-
-            Uploaded file
-                  |
-                  +----> Database -> live guest records
-                  |
-                  +----> Google Drive -> original uploaded file
+        Uploaded file
+        +--> Database -> live guest records
+        +--> Supabase Storage -> original uploaded file
 
         The database remains the operational source of truth.
-        Google Drive is used as the original-file archive.
+        Supabase Storage is used as the original-file archive.
         """
 
         if (
@@ -651,18 +898,8 @@ class GuestState(rx.State):
         yield
 
         try:
-            from guest_management.repositories import (
-                EventRepository,
-            )
-            from guest_management.services.guest_service import (
-                GuestService,
-            )
-            from guest_management.services.google_drive_asset_service import (
-                GoogleDriveAssetService,
-            )
-            from guest_management.state.auth_state import (
-                AuthState,
-            )
+
+
 
             # ==============================================================
             # AUTHENTICATION
@@ -677,21 +914,23 @@ class GuestState(rx.State):
             event_id = int(self.current_event_id)
 
             # ==============================================================
-            # VERIFY EVENT OWNERSHIP
+            # VERIFY EVENT ACCESS
             # ==============================================================
 
-            event_repo = EventRepository()
 
-            event = event_repo.get_by_id(
-                event_id,
-                auth.user_id,
-            )
 
-            if not event:
+            try:
+                event = EventService().get_event(
+                    event_id,
+                    auth.user_id,
+                    auth.user,
+                )
+            except (AuthorizationError, EventNotFoundError) as exc:
                 raise ValueError(
                     "Event not found or access denied"
-                )
+                ) from exc
 
+            event_repo = EventRepository()
             event_type = event.get(
                 "event_type",
                 "company_dinner",
@@ -757,159 +996,137 @@ class GuestState(rx.State):
                     event_type,
                 )
             )
-
             # ==============================================================
-            # ARCHIVE ORIGINAL FILE TO GOOGLE DRIVE
+            # ARCHIVE ORIGINAL FILE TO SUPABASE STORAGE
             # ==============================================================
             #
             # The guest import has already succeeded.
             #
-            # Drive archival is intentionally handled separately so a
-            # temporary Drive problem does NOT destroy an otherwise
+            # Storage archival is intentionally handled separately so a
+            # temporary Storage problem does NOT destroy an otherwise
             # successful guest import.
             # ==============================================================
 
-            drive_asset = None
-            drive_error = None
+            storage_asset = None
+            storage_error = None
 
             try:
-                drive_service = GoogleDriveAssetService(
-                    user_id=auth.user_id
-                )
-
-                # ----------------------------------------------------------
-                # Get the event's dedicated Google Drive folder.
-                # ----------------------------------------------------------
-
-                event = (
-                    event_repo.get_by_id(
-                        event_id,
-                        auth.user_id,
-                    )
-                )
-
-                if not event:
-                    raise ValueError(
-                        f"Event {event_id} not found."
-                    )
-
-                event_folder_id = (
-                    event.get("event_drive_folder_id")
-                )
-
-                if not event_folder_id:
-                    raise ValueError(
-                        f"Event {event_id} does not have "
-                        "a Google Drive folder."
-                    )
+                storage_service = StorageService()
 
                 # ----------------------------------------------------------
                 # Upload the original guest-list file.
                 # ----------------------------------------------------------
 
-                drive_asset = (
-                    drive_service.upload_guest_list(
-                        content=original_content,
-                        filename=original_filename,
-                        mime_type=(
-                            self._detect_upload_mime_type(
-                                original_filename
-                            )
-                        ),
-                        folder_id=event_folder_id,
-                    )
+                storage_asset = storage_service.upload(
+                    event_id=event_id,
+                    asset_type="guest-list",
+                    content=original_content,
+                    filename=original_filename,
+                    mime_type=self._detect_upload_mime_type(
+                        original_filename
+                    ),
+                    upsert=True,
                 )
 
                 # ----------------------------------------------------------
-                # Store Drive metadata against the event.
+                # Store Storage metadata against the event.
                 # ----------------------------------------------------------
 
-                updated_event = (
-                    event_repo.update_guest_list_asset(
-                        event_id=event_id,
-                        user_id=auth.user_id,
-                        file_id=drive_asset.file_id,
-                        filename=drive_asset.filename,
-                        mime_type=drive_asset.mime_type,
-                    )
+                updated_event = event_repo.update_guest_list_asset(
+                    event_id=event_id,
+                    storage_path=storage_asset.path,
+                    filename=storage_asset.filename,
+                    mime_type=storage_asset.mime_type,
                 )
 
                 if not updated_event:
                     logger.warning(
-                        "Guest list uploaded to Drive but "
+                        "Guest list uploaded to Supabase Storage but "
                         "event metadata could not be updated. "
-                        "event_id=%s file_id=%s",
+                        "event_id=%s storage_path=%s",
                         event_id,
-                        drive_asset.file_id,
+                        storage_asset.path,
                     )
 
             except Exception as exc:
-                drive_error = exc
+                storage_error = exc
 
                 logger.exception(
                     "Guest list imported successfully but "
-                    "Google Drive archival failed. "
+                    "Supabase Storage archival failed. "
                     "event_id=%s filename=%s",
                     event_id,
                     original_filename,
                 )
-
-            # ==============================================================
-            # UPDATE UI STATE
-            # ==============================================================
-
-            self.uploaded_filename = (
-                original_filename
-            )
-
-            self.selected_file_name = ""
-            self._selected_file_content = b""
-            self._selected_filename = ""
-
-            self.close_upload_dialog()
-
-            # Sports-day amount detection.
-            self.has_amounts = (
-                    event_type == "sports_day"
-                    and any(
-                float(
-                    guest.get("amount", 0)
-                    or 0
-                ) > 0
-                for guest in rows
-            )
-            )
-
             # ==============================================================
             # USER FEEDBACK
             # ==============================================================
-
-            if drive_asset:
+            storage_metadata_updated = False
+            if updated_event:
+                storage_metadata_updated = True
+            else:
+                logger.error(
+                    "Guest list uploaded to Supabase Storage, "
+                    "but event metadata update returned no row. "
+                    "event_id=%s storage_path=%s",
+                    event_id,
+                    storage_asset.path,
+                )
+            if storage_asset and storage_metadata_updated:
+                yield rx.toast.success(
+                    f"Imported {created} guests successfully. "
+                    "Guest list archived to Supabase Storage."
+                )
+            elif storage_asset:
+                yield rx.toast.warning(
+                    f"Imported {created} guests successfully. "
+                    "Guest list uploaded to Storage, but event metadata "
+                    "could not be updated."
+                )
+            else:
+                yield rx.toast.warning(
+                    f"Imported {created} guests successfully. "
+                    "Guest list was not archived to Supabase Storage."
+                )
+            if storage_asset:
                 if skipped:
                     yield rx.toast.warning(
                         f"Imported {created} guests. "
                         f"Skipped {skipped} duplicate IDs. "
-                        "Original guest list archived to Google Drive."
+                        "Original guest list archived to Supabase Storage."
                     )
                 else:
                     yield rx.toast.success(
                         f"Imported {created} guests successfully. "
-                        "Original guest list archived to Google Drive."
+                        "Original guest list archived to Supabase Storage."
                     )
 
             else:
-                # Database import succeeded, but Drive backup failed.
+                # Database import succeeded, but Storage backup failed.
                 if skipped:
                     yield rx.toast.warning(
                         f"Imported {created} guests. "
                         f"Skipped {skipped} duplicate IDs. "
-                        "Guest list was not archived to Google Drive."
+                        "Guest list was not archived to Supabase Storage."
                     )
                 else:
                     yield rx.toast.warning(
                         f"Imported {created} guests successfully. "
-                        "Guest list was not archived to Google Drive."
+                        "Guest list was not archived to Supabase Storage."
                     )
+
+            # ==============================================================
+            # CLOSE UPLOAD DIALOG
+            # ==============================================================
+
+            self.close_upload_dialog()
+
+            # Clear the uploaded file bytes and filename so the previous
+            # file cannot accidentally be reused on the next upload.
+            self._selected_file_content = b""
+            self._selected_filename = ""
+
+            yield
 
             # ==============================================================
             # REFRESH DASHBOARD
@@ -917,6 +1134,14 @@ class GuestState(rx.State):
 
             async for update in self.load_guests():
                 yield update
+
+            # ==============================================================
+            # RETURN TO EVENT DASHBOARD
+            # ==============================================================
+
+            yield rx.redirect(
+                f"/dashboard/{event_id}"
+            )
 
         except Exception as exc:
             logger.exception(
@@ -982,8 +1207,7 @@ class GuestState(rx.State):
     async def validate_token(self, raw_qr: str):
         """Validate and atomically check in a signed QR payload."""
         try:
-            from guest_management.services.checkin_service import CheckinService
-            from guest_management.core.exceptions import GuestAlreadyCheckedInError
+
             result = CheckinService().check_in(int(self.current_event_id), raw_qr)
             query = f"guest_id={result.get('guest_id', '')}&token={result.get('receipt_token', '')}"
             yield rx.redirect(f"/success/{self.current_event_id}?{query}")
@@ -1140,14 +1364,20 @@ class GuestState(rx.State):
         self.is_loading = True
         yield
         try:
-            from guest_management.services.event_service import EventService
-            from guest_management.repositories import EventRepository, GuestRepository
-            from guest_management.state.auth_state import AuthState
+
             auth = await self.get_state(AuthState)
             event_id = int(self.current_event_id)
-            if not EventRepository().get_by_id(event_id, auth.user_id):
+
+            try:
+                EventService().get_event(
+                    event_id,
+                    auth.user_id,
+                    auth.user,
+                )
+            except (AuthorizationError, EventNotFoundError):
                 yield rx.toast.error("Permission denied")
                 return
+
             GuestRepository().delete_by_event(event_id)
             EventRepository().update_counts(event_id, 0, 0)
             self.guest_data = []
@@ -1391,6 +1621,7 @@ class GuestState(rx.State):
 
         else:
             logger.warning("No event ID found, cannot load guests")
+
 
 # For backward compatibility
 State = GuestState

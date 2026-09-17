@@ -69,7 +69,7 @@ class EmailService:
     @staticmethod
     def _logo_html(event: Dict[str, Any]) -> str:
         """Build the inline company-logo block."""
-        if not str(event.get("logo_drive_file_id") or "").strip():
+        if not str(event.get("logo_storage_path") or "").strip():
             return ""
 
         return (
@@ -83,15 +83,16 @@ class EmailService:
     @staticmethod
     def _invitation_html(event: Dict[str, Any]) -> str:
         """Build an inline invitation image block."""
-        file_id = str(
-            event.get("invitation_drive_file_id") or ""
+
+        storage_path = str(
+            event.get("invitation_storage_path") or ""
         ).strip()
 
         mime_type = str(
             event.get("invitation_mime_type") or ""
         ).strip().lower()
 
-        if not file_id or not mime_type.startswith("image/"):
+        if not storage_path or not mime_type.startswith("image/"):
             return ""
 
         return (
@@ -153,187 +154,251 @@ class EmailService:
 <body style="
     margin:0;
     padding:0;
-    background:#f4f4f2;
+    background:#0b0b0b;
     font-family:Arial,Helvetica,sans-serif;
-    color:#252525;
+    color:#f4f1e8;
 ">
-
-<div style="padding:28px 10px;">
 
 <div style="
-    max-width:620px;
-    margin:0 auto;
-    background:#ffffff;
-    border-radius:18px;
-    overflow:hidden;
-    border:1px solid #e8e8e6;
+    width:100%;
+    padding:34px 10px;
+    background:#0b0b0b;
 ">
 
-    <!-- HEADER -->
-
     <div style="
-        padding:34px 28px 16px;
-        text-align:center;
+        max-width:620px;
+        margin:0 auto;
+        background:#111111;
+        border:1px solid #2d2a24;
+        border-radius:20px;
+        overflow:hidden;
     ">
 
-        {logo_html}
-
-        {company_line}
-
+        <!-- GOLD TOP ACCENT -->
         <div style="
-            font-size:29px;
-            line-height:1.2;
-            font-weight:700;
-            margin:4px 0 8px;
-        ">
-            {event_name}
-        </div>
+            height:4px;
+            background:#c9a227;
+            font-size:0;
+            line-height:0;
+        ">&nbsp;</div>
 
+        <!-- HEADER -->
         <div style="
-            font-size:14px;
-            color:#888;
-        ">
-            You are warmly invited
-        </div>
-
-    </div>
-
-
-    <!-- CONTENT -->
-
-    <div style="padding:10px 28px 34px;">
-
-        <p style="
-            font-size:18px;
-            margin:8px 0 18px;
-        ">
-            Hello <strong>{name}</strong>,
-        </p>
-
-        <p style="
-            font-size:15px;
-            line-height:1.7;
-            color:#555;
-            margin:0 0 24px;
-        ">
-            We are delighted to have you join us.
-            Please find your personal event details below.
-        </p>
-
-
-        <!-- EVENT DETAILS -->
-
-        <div style="
-            background:#faf8f3;
-            border:1px solid #eee6d8;
-            border-radius:14px;
-            padding:19px 20px;
-            margin:0 0 24px;
-        ">
-
-            <div style="
-                font-size:11px;
-                text-transform:uppercase;
-                letter-spacing:1.4px;
-                color:#999;
-                margin-bottom:11px;
-            ">
-                Event Details
-            </div>
-
-            <div style="
-                font-size:15px;
-                line-height:1.9;
-            ">
-                <strong>Date</strong>&nbsp;&nbsp;{date}<br>
-                <strong>Time</strong>&nbsp;&nbsp;{time}<br>
-                <strong>Venue</strong>&nbsp;&nbsp;{venue}<br>
-                <strong>Table</strong>&nbsp;&nbsp;{table}
-            </div>
-
-        </div>
-
-
-        <!-- EVENT INVITATION -->
-
-        {invitation_html}
-
-
-        <!-- PERSONAL QR -->
-
-        <div style="
+            padding:38px 28px 30px;
             text-align:center;
-            padding:8px 0 2px;
+            background:#111111;
         ">
 
-            <div style="
-                font-size:13px;
-                color:#777;
-                margin-bottom:12px;
-            ">
-                Your personal entry QR code
-            </div>
+            {logo_html}
+
+            {company_line}
 
             <div style="
-                display:inline-block;
-                background:#fff;
-                padding:14px;
-                border:1px solid #e8e8e8;
-                border-radius:14px;
+                width:46px;
+                height:1px;
+                background:#c9a227;
+                margin:18px auto 20px;
+            ">&nbsp;</div>
+
+            <div style="
+                font-size:30px;
+                line-height:1.2;
+                font-weight:700;
+                letter-spacing:.2px;
+                color:#f5f0e5;
+                margin:0 0 10px;
             ">
-
-                <img
-                    src="cid:guest-qr"
-                    alt="Event QR Code"
-                    width="220"
-                    style="
-                        display:block;
-                        width:220px;
-                        height:220px;
-                    "
-                >
-
+                {event_name}
             </div>
 
             <div style="
                 font-size:12px;
-                color:#999;
-                margin-top:10px;
+                line-height:1.6;
+                text-transform:uppercase;
+                letter-spacing:2.4px;
+                color:#c9a227;
             ">
-                Please present this QR code at the entrance.
+                You are warmly invited
             </div>
 
         </div>
 
-
-        <p style="
-            font-size:15px;
-            line-height:1.7;
-            color:#555;
-            text-align:center;
-            margin:28px 0 4px;
+        <!-- CONTENT -->
+        <div style="
+            padding:30px 28px 38px;
+            background:#111111;
         ">
-            We look forward to seeing you.
-        </p>
+
+            <p style="
+                font-size:18px;
+                line-height:1.5;
+                color:#f5f0e5;
+                margin:0 0 16px;
+            ">
+                Hello <strong style="color:#d8b84c;">{name}</strong>,
+            </p>
+
+            <p style="
+                font-size:15px;
+                line-height:1.75;
+                color:#b7b3aa;
+                margin:0 0 28px;
+            ">
+                We are delighted to have you join us.
+                Please keep this invitation for your event entry.
+            </p>
+
+            <!-- EVENT DETAILS -->
+            <div style="
+                background:#171614;
+                border:1px solid #332f27;
+                border-radius:16px;
+                padding:20px;
+                margin:0 0 28px;
+            ">
+
+                <div style="
+                    font-size:11px;
+                    text-transform:uppercase;
+                    letter-spacing:1.8px;
+                    color:#c9a227;
+                    margin-bottom:16px;
+                ">
+                    Event Details
+                </div>
+
+                <div style="
+                    font-size:14px;
+                    line-height:1.9;
+                    color:#eee9dd;
+                ">
+                    <div style="padding:7px 0;border-bottom:1px solid #292722;">
+                        <span style="color:#918d84;">Date</span>
+                        <span style="float:right;font-weight:600;">{date}</span>
+                    </div>
+                    <div style="padding:7px 0;border-bottom:1px solid #292722;">
+                        <span style="color:#918d84;">Time</span>
+                        <span style="float:right;font-weight:600;">{time}</span>
+                    </div>
+                    <div style="padding:7px 0;border-bottom:1px solid #292722;">
+                        <span style="color:#918d84;">Venue</span>
+                        <span style="float:right;font-weight:600;">{venue}</span>
+                    </div>
+                    <div style="padding:7px 0;">
+                        <span style="color:#918d84;">Table</span>
+                        <span style="float:right;font-weight:700;color:#d8b84c;">{table}</span>
+                    </div>
+                    <div style="clear:both;"></div>
+                </div>
+
+            </div>
+
+            <!-- EVENT INVITATION -->
+            {invitation_html}
+
+            <!-- PERSONAL QR -->
+            <div style="
+                margin:30px 0 0;
+                text-align:center;
+                padding:26px 18px 24px;
+                background:#171614;
+                border:1px solid #332f27;
+                border-radius:16px;
+            ">
+
+                <div style="
+                    font-size:11px;
+                    text-transform:uppercase;
+                    letter-spacing:1.8px;
+                    color:#c9a227;
+                    margin-bottom:8px;
+                ">
+                    Your Personal Entry Pass
+                </div>
+
+                <div style="
+                    font-size:14px;
+                    color:#b7b3aa;
+                    margin-bottom:18px;
+                    line-height:1.5;
+                ">
+                    Present this QR code at the entrance.
+                </div>
+
+                <div style="
+                    display:inline-block;
+                    background:#ffffff;
+                    padding:14px;
+                    border:3px solid #c9a227;
+                    border-radius:16px;
+                ">
+
+                    <img
+                        src="cid:guest-qr"
+                        alt="Event QR Code"
+                        width="220"
+                        style="
+                            display:block;
+                            width:220px;
+                            height:220px;
+                        "
+                    >
+
+                </div>
+
+                <div style="
+                    font-size:11px;
+                    color:#817d74;
+                    margin-top:14px;
+                    line-height:1.5;
+                ">
+                    This QR code is personal to you.
+                </div>
+
+            </div>
+
+            <p style="
+                font-size:15px;
+                line-height:1.7;
+                color:#b7b3aa;
+                text-align:center;
+                margin:30px 0 0;
+            ">
+                We look forward to welcoming you.
+            </p>
+
+        </div>
+
+        <!-- FOOTER -->
+        <div style="
+            padding:20px 24px;
+            background:#0d0d0d;
+            border-top:1px solid #292722;
+            text-align:center;
+        ">
+
+            <div style="
+                font-size:12px;
+                font-weight:700;
+                letter-spacing:1.2px;
+                color:#c9a227;
+                margin-bottom:7px;
+            ">
+                EVENTLAH
+            </div>
+
+            <div style="
+                font-size:10px;
+                line-height:1.6;
+                color:#716e67;
+            ">
+                This invitation was sent by EventLah.<br>
+                Please keep this email for event entry.
+            </div>
+
+        </div>
 
     </div>
-
-
-    <!-- FOOTER -->
-
-    <div style="
-        padding:17px 24px;
-        background:#fafafa;
-        border-top:1px solid #eee;
-        text-align:center;
-        font-size:11px;
-        color:#999;
-    ">
-        This invitation was sent by EventLah.
-        Please keep this email for event entry.
-    </div>
-
-</div>
 
 </div>
 

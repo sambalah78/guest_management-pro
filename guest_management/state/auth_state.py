@@ -1,112 +1,511 @@
-"""Google authentication state."""
+"""EventLah authentication state using Supabase Auth."""
+
 from __future__ import annotations
-import secrets
+
+import os
+
 import reflex as rx
-from itsdangerous import TimestampSigner, BadSignature
+
 from guest_management.core.config import settings
 from guest_management.services.auth_service import AuthService
 
-signer = TimestampSigner(settings.session_secret)
 
 class AuthState(rx.State):
-    session_token: str = rx.Cookie(name="eventlah_session", max_age=settings.session_ttl_seconds, path="/", same_site="lax", secure=settings.is_production)
-    oauth_state: str = rx.Cookie(name="eventlah_oauth_state", max_age=600, path="/", same_site="lax", secure=settings.is_production)
+    """Browser/application authentication state.
+
+    Supabase Auth is responsible for authentication.
+
+    The existing ``eventlah_session`` cookie is temporarily retained
+    as the access-token cookie during the migration so that the rest of
+    the application does not need to change authentication contracts
+    all at once.
+    """
+
+    # ------------------------------------------------------------------
+    # Authentication token
+    # ------------------------------------------------------------------
+
+    # IMPORTANT:
+    # This cookie now contains the Supabase access token.
+    #
+    # We retain the existing cookie name temporarily so downstream
+    # The existing cookie name is retained temporarily for compatibility.
+    access_token: str = rx.Cookie(
+        name="eventlah_session",
+        max_age=settings.session_ttl_seconds,
+        path="/",
+        same_site="lax",
+        secure=settings.is_production,
+    )
+
+    refresh_token: str = rx.Cookie(
+        name="eventlah_refresh",
+        max_age=settings.session_ttl_seconds,
+        path="/",
+        same_site="lax",
+        secure=settings.is_production,
+    )
+
+    # ------------------------------------------------------------------
+    # Login form
+    # ------------------------------------------------------------------
+
     username: str = ""
     password: str = ""
+
     auth_error: str = ""
     is_authenticated: bool = False
+
     user: dict = {}
     user_id: str = ""
     user_email: str = ""
+
     auth_checked: bool = False
     is_loading: bool = False
 
-    @rx.var
-    def is_logged_in(self) -> bool: return self.is_authenticated and bool(self.user_id)
+    # ------------------------------------------------------------------
+    # Local demo login
+    # ------------------------------------------------------------------
 
-    @rx.var
-    def google_login_url(self) -> str:
-        if not settings.google_client_id: return "/login"
-        return AuthService().google_authorization_url(self.oauth_state or "") if self.oauth_state else "/login"
+    # Keep this for local development only.
+    DEMO_LOGIN_ENABLED: bool = (
+        os.getenv(
+            "EVENTLAH_DEMO_LOGIN",
+            "false",
+        ).lower()
+        == "true"
+    )
 
-    def start_google_login(self):
-        state = secrets.token_urlsafe(32)
-        self.oauth_state = state
-        return rx.redirect(AuthService().google_authorization_url(state))
+    DEMO_EMAIL: str = (
+        os.getenv(
+            "INITIAL_ADMIN_EMAIL",
+            "demo@eventlah.local",
+        )
+        .strip()
+        .lower()
+    )
 
-    def logout(self):
-        AuthService().logout(self.session_token)
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
-        self.session_token = ""
+    def _apply_user(
+        self,
+        user: dict,
+    ) -> None:
+        """Apply an EventLah user profile to state."""
+        self.user = user
+        self.user_id = str(
+            user.get("id") or ""
+        )
+        self.user_email = str(
+            user.get("email") or ""
+        ).strip().lower()
+
+        self.is_authenticated = bool(
+            self.user_id
+        )
+
+        self.auth_error = ""
+
+    def _clear_auth_state(self) -> None:
+        """Clear all local authentication state."""
+        self.access_token = ""
+        self.refresh_token = ""
         self.is_authenticated = False
-        self.auth_checked = True
         self.user_id = ""
         self.user_email = ""
         self.user = {}
+        self.auth_error = ""
+
+    def _apply_demo_login(self):
+        """Apply the local development/demo account."""
+        self.user_id = "demo-eventlah-admin"
+        self.user_email = self.DEMO_EMAIL
+
+        self.user = {
+            "id": self.user_id,
+            "email": self.user_email,
+            "name": "EventLah Demo Admin",
+            "role": "OWNER",
+            "is_active": True,
+        }
+
+        self.is_authenticated = True
+        self.auth_checked = True
+        self.auth_error = ""
+
+    # ------------------------------------------------------------------
+    # Computed state
+    # ------------------------------------------------------------------
+
+    @rx.var
+    def is_logged_in(self) -> bool:
+        """Return whether an authenticated EventLah user is present."""
+        return (
+            self.is_authenticated
+            and bool(self.user_id)
+        )
+
+    @rx.var
+    def is_event_admin(self) -> bool:
+        """Return whether the current user may manage events."""
+        role = str(
+            self.user.get("role") or ""
+        ).strip().upper()
+
+        return (
+            self.is_logged_in
+            and role in {"OWNER", "ADMIN"}
+        )
+
+    @rx.var
+    def is_owner(self) -> bool:
+        """Return whether the current user is an OWNER."""
+        return (
+            self.is_logged_in
+            and str(
+                self.user.get("role") or ""
+            ).strip().upper()
+            == "OWNER"
+        )
+
+    # ------------------------------------------------------------------
+    # Supabase login
+    # ------------------------------------------------------------------
+
+    async def login(self):
+        """Sign in using Supabase Auth email/password."""
+        self.is_loading = True
+        self.auth_error = ""
+
+        try:
+            email = self.username.strip().lower()
+
+            if not email:
+                self.auth_error = "Please enter your email address."
+                yield rx.toast.error(
+                    title=self.auth_error
+                )
+                return
+
+            if not self.password:
+                self.auth_error = "Please enter your password."
+                yield rx.toast.error(
+                    title=self.auth_error
+                )
+                return
+
+            result = AuthService().login(
+                email=email,
+                password=self.password,
+            )
+
+            user = result.get("user")
+
+            if not user:
+                self.auth_error = (
+                    "Authentication succeeded, but "
+                    "your EventLah profile could not be found."
+                )
+                yield rx.toast.error(
+                    title=self.auth_error
+                )
+                return
+
+            access_token = str(
+                result.get("access_token") or ""
+            )
+
+            if not access_token:
+                self.auth_error = (
+                    "Authentication succeeded, but "
+                    "no access token was returned."
+                )
+                yield rx.toast.error(
+                    title=self.auth_error
+                )
+                return
+
+            refresh_token = str(
+                result.get("refresh_token") or ""
+            )
+
+            if not refresh_token:
+                self.auth_error = (
+                    "Authentication succeeded, but "
+                    "no refresh token was returned."
+                )
+                yield rx.toast.error(
+                    title=self.auth_error
+                )
+                return
+
+            self.access_token = access_token
+            self.refresh_token = refresh_token
+
+            self._apply_user(user)
+            self.auth_checked = True
+
+            # Do not retain the password in application state after
+            # successful authentication.
+            self.password = ""
+
+            yield rx.redirect("/events")
+
+        except PermissionError as exc:
+            self.auth_error = str(exc)
+            self._clear_auth_state()
+
+            yield rx.toast.error(
+                title=self.auth_error
+            )
+
+        except ValueError as exc:
+            self.auth_error = str(exc)
+
+            yield rx.toast.error(
+                title=self.auth_error
+            )
+        except Exception:
+            self.auth_error = (
+                "Unable to sign in. "
+                "Please check your email and password."
+            )
+
+            self._clear_auth_state()
+
+            yield rx.toast.error(
+                title=self.auth_error
+            )
+
+        finally:
+            self.is_loading = False
+
+    # ------------------------------------------------------------------
+    # Demo login
+    # ------------------------------------------------------------------
+
+    async def login_with_demo(self):
+        """Fast local/demo login.
+
+        Never enable this on a public deployment.
+        """
+        if not self.DEMO_LOGIN_ENABLED:
+            yield rx.toast.error(
+                message="Demo login is disabled."
+            )
+            return
+
+        self._apply_demo_login()
+
+        yield rx.redirect("/events")
+
+    # ------------------------------------------------------------------
+    # Logout
+    # ------------------------------------------------------------------
+
+    def logout(self):
+        """Sign out from Supabase and clear the local session."""
+
+        try:
+            AuthService().logout(
+                access_token=self.access_token,
+                refresh_token=self.refresh_token,
+            )
+        except Exception:
+            # Even if the remote Supabase logout fails,
+            # the local browser session must still be destroyed.
+            pass
+
+        self._clear_auth_state()
+        self.auth_checked = True
 
         return [
             rx.remove_cookie("eventlah_session"),
+            rx.remove_cookie("eventlah_refresh"),
             rx.redirect("/"),
         ]
 
-    def _is_public_route(self, path: str) -> bool:
-        if not path: return True
-        exact = {"/", "/home", "/login", "/about", "/products", "/contact", "/select-event-type", "/health", "/auth/google/callback"}
-        prefixes = ("/stall", "/scanner", "/scanner-guest", "/scanner_guest", "/checkin", "/success", "/already-checked", "/already_checked", "/lucky-draw-display")
-        return path in exact or path.startswith(prefixes)
+    # ------------------------------------------------------------------
+    # Route protection
+    # ------------------------------------------------------------------
+
+    def _is_public_route(
+        self,
+        path: str,
+    ) -> bool:
+        """Return whether a route does not require admin login."""
+        if not path:
+            return True
+
+        exact = {
+            "/",
+            "/home",
+            "/login",
+            "/about",
+            "/products",
+            "/contact",
+            "/select-event-type",
+            "/health",
+        }
+
+        prefixes = (
+            "/stall",
+            "/scanner",
+            "/scanner-guest",
+            "/scanner_guest",
+            "/checkin",
+            "/success",
+            "/already-checked",
+            "/already_checked",
+            "/lucky-draw-display",
+        )
+
+        return (
+            path in exact
+            or path.startswith(prefixes)
+        )
+    def _get_valid_user(self) -> dict | None:
+        """Return the current user, refreshing the session if necessary."""
+
+        user = AuthService().get_current_user(
+            self.access_token
+        )
+
+        if user:
+            return user
+
+        if not self.refresh_token:
+            return None
+
+        refreshed = AuthService().refresh_session(
+            self.refresh_token
+        )
+
+        if not refreshed:
+            return None
+
+        new_access_token = str(
+            refreshed.get("access_token") or ""
+        )
+
+        new_refresh_token = str(
+            refreshed.get("refresh_token") or ""
+        )
+
+        refreshed_user = refreshed.get("user")
+
+        if (
+            not new_access_token
+            or not new_refresh_token
+            or not refreshed_user
+        ):
+            return None
+
+        self.access_token = new_access_token
+        self.refresh_token = new_refresh_token
+
+        return refreshed_user
+
+    # ------------------------------------------------------------------
+    # Authentication checks
+    # ------------------------------------------------------------------
 
     async def check_auth(self):
-        path = getattr(self.router.url, "path", "") or "/"
-        if self._is_public_route(path): self.auth_checked = True; return
-        user = AuthService().get_current_user(self.session_token)
-        if user:
-            self.user = user
-            self.user_id = user["id"]
-            self.user_email = str(user.get("email", "")).strip().lower()
-            self.is_authenticated = True
-        else:
-            self.session_token = ""
-            self.is_authenticated = False
-            self.user_id = ""
-            self.user_email = ""
-            self.user = {}
+        """Validate the current Supabase access token."""
+        if self.DEMO_LOGIN_ENABLED:
+            self._apply_demo_login()
+            return
 
-            yield rx.redirect("/login")
+        path = (
+            getattr(
+                self.router.url,
+                "path",
+                "",
+            )
+            or "/"
+        )
+
+        if self._is_public_route(path):
+            self.auth_checked = True
+            return
+
+        user = self._get_valid_user()
+
+        if user:
+            self._apply_user(user)
+        else:
+            self._clear_auth_state()
+
+            yield rx.redirect(
+                "/login"
+            )
+
         self.auth_checked = True
 
     async def check_session_on_load(self):
-        user = AuthService().get_current_user(self.session_token)
+        """Validate the authentication token when the app loads."""
+        if self.DEMO_LOGIN_ENABLED:
+            self._apply_demo_login()
+
+            if (
+                getattr(
+                    self.router.url,
+                    "path",
+                    "",
+                )
+                or ""
+            ) == "/login":
+                yield rx.redirect(
+                    "/events"
+                )
+
+            return
+
+        user = self._get_valid_user()
 
         if user:
-            self.user = user
-            self.user_id = user["id"]
-            self.user_email = str(user.get("email", "")).strip().lower()
-            self.is_authenticated = True
+            self._apply_user(user)
+
         else:
-            self.session_token = ""
-            self.is_authenticated = False
-            self.user_id = ""
-            self.user_email = ""
-            self.user = {}
+            self._clear_auth_state()
 
         self.auth_checked = True
 
-    async def ensure_valid_session(self) -> bool:
-        user = AuthService().get_current_user(self.session_token)
-
-        self.is_authenticated = bool(user)
+    async def ensure_valid_session(
+        self,
+    ) -> bool:
+        """Validate the current Supabase access token."""
+        user = self._get_valid_user()
 
         if user:
-            self.user = user
-            self.user_id = user["id"]
-            self.user_email = str(user.get("email", "")).strip().lower()
-        else:
-            self.user = {}
-            self.user_id = ""
-            self.user_email = ""
+            self._apply_user(user)
+            return True
 
-        return bool(user)
+        self._clear_auth_state()
 
-    def set_username(self, value: str): self.username = value.strip()
-    def set_password(self, value: str): self.password = value
-    def set_access_token(self, token: str): self.session_token = token or ""
+        return False
+
+    # ------------------------------------------------------------------
+    # Form setters
+    # ------------------------------------------------------------------
+
+    def set_username(
+        self,
+        value: str,
+    ):
+        self.username = value.strip()
+
+    def set_password(
+        self,
+        value: str,
+    ):
+        self.password = value
+
+    def set_access_token(
+        self,
+        token: str,
+    ):
+        """Compatibility setter for existing callers."""
+        self.access_token = token or ""

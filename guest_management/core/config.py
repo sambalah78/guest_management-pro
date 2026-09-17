@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -15,47 +16,48 @@ def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
 
 
-def _email_list(name: str) -> tuple[str, ...]:
-    """Read a comma-separated email allowlist."""
-    raw = _env(name)
-
-    if not raw:
-        return ()
-
-    return tuple(
-        email.strip().lower()
-        for email in raw.split(",")
-        if email.strip()
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class Settings:
     environment: str
     app_url: str
     database_url: str
 
+    # Supabase infrastructure
+    # Kept for existing application integrations.
+    supabase_url: str
+    supabase_anon_key: str
+    supabase_secret_key: str
+
+    # QR configuration
     qr_secret: str
 
-    sendgrid_api_key: str
+    # Email configuration
+    email_provider: str
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
     sender_email: str
 
+    # Google OAuth / Drive
     google_client_id: str
     google_client_secret: str
     google_redirect_uri: str
-
     google_drive_root_folder_id: str
 
-    # Event creator allowlist
-    event_creator_emails: tuple[str, ...]
-
+    # Session configuration
     session_secret: str
     session_ttl_seconds: int
 
+    # Scanner configuration
+    scanner_station_secret: str
+
+    # Email worker configuration
     email_worker_batch_size: int
     email_worker_interval_seconds: float
     email_max_attempts: int
 
+    # QR compatibility
     allow_legacy_qr: bool
 
     @property
@@ -65,27 +67,31 @@ class Settings:
             "prod",
         }
 
-    def is_event_creator(self, email: str | None) -> bool:
-        """Return True when the email is allowed to create events."""
-        if not email:
-            return False
-
-        return email.strip().lower() in self.event_creator_emails
-
     def validate(self) -> None:
         required = {
             "DATABASE_URL": self.database_url,
             "QR_SECRET": self.qr_secret,
             "SESSION_SECRET": self.session_secret,
+            "SCANNER_STATION_SECRET": self.scanner_station_secret,
         }
 
         if self.is_production:
             required.update(
                 {
+                    # Existing Supabase configuration
+                    "SUPABASE_URL": self.supabase_url,
+                    "SUPABASE_ANON_KEY": self.supabase_anon_key,
+                    "SUPABASE_SECRET_KEY": self.supabase_secret_key,
+
+                    # Google
                     "GOOGLE_CLIENT_ID": self.google_client_id,
                     "GOOGLE_CLIENT_SECRET": self.google_client_secret,
                     "GOOGLE_REDIRECT_URI": self.google_redirect_uri,
-                    "SENDGRID_API_KEY": self.sendgrid_api_key,
+
+                    # Email
+                    "EMAIL_PROVIDER": self.email_provider,
+                    "SMTP_USERNAME": self.smtp_username,
+                    "SMTP_PASSWORD": self.smtp_password,
                     "SENDER_EMAIL": self.sender_email,
                 }
             )
@@ -112,9 +118,13 @@ class Settings:
                 "SESSION_SECRET must contain at least 32 characters"
             )
 
+        if len(self.scanner_station_secret) < 32:
+            raise ConfigurationError(
+                "SCANNER_STATION_SECRET must contain at least 32 characters"
+            )
+
 
 def load_settings() -> Settings:
-
     def integer(name: str, default: int) -> int:
         try:
             return int(
@@ -148,28 +158,66 @@ def load_settings() -> Settings:
 
         database_url=_env(
             "DATABASE_URL",
-            "sqlite:///./guest_management.db",
+            "",
         ),
 
+        # Supabase
+        supabase_url=_env(
+            "SUPABASE_URL",
+        ),
+
+        supabase_anon_key=_env(
+            "SUPABASE_ANON_KEY",
+        ),
+
+        supabase_secret_key=_env(
+            "SUPABASE_SECRET_KEY",
+        ),
+
+        # QR
         qr_secret=_env(
             "QR_SECRET",
             "dev-qr-secret-change-me-please-32-characters",
         ),
 
-        sendgrid_api_key=_env(
-            "SENDGRID_API_KEY"
+        # Gmail SMTP
+        email_provider=_env(
+            "EMAIL_PROVIDER",
+            "gmail",
+        ).lower(),
+
+        smtp_host=_env(
+            "SMTP_HOST",
+            "smtp.gmail.com",
+        ),
+
+        smtp_port=max(
+            1,
+            integer(
+                "SMTP_PORT",
+                587,
+            ),
+        ),
+
+        smtp_username=_env(
+            "SMTP_USERNAME",
+        ),
+
+        smtp_password=_env(
+            "SMTP_PASSWORD",
         ),
 
         sender_email=_env(
-            "SENDER_EMAIL"
+            "SENDER_EMAIL",
         ),
 
+        # Google OAuth / Drive
         google_client_id=_env(
-            "GOOGLE_CLIENT_ID"
+            "GOOGLE_CLIENT_ID",
         ),
 
         google_client_secret=_env(
-            "GOOGLE_CLIENT_SECRET"
+            "GOOGLE_CLIENT_SECRET",
         ),
 
         google_redirect_uri=_env(
@@ -178,13 +226,10 @@ def load_settings() -> Settings:
         ),
 
         google_drive_root_folder_id=_env(
-            "GOOGLE_DRIVE_ROOT_FOLDER_ID"
+            "GOOGLE_DRIVE_ROOT_FOLDER_ID",
         ),
 
-        event_creator_emails=_email_list(
-            "EVENT_CREATOR_EMAILS"
-        ),
-
+        # Session
         session_secret=_env(
             "SESSION_SECRET",
             "dev-session-secret-change-me-please-32-characters",
@@ -198,6 +243,13 @@ def load_settings() -> Settings:
             ),
         ),
 
+        # Scanner
+        scanner_station_secret=_env(
+            "SCANNER_STATION_SECRET",
+            "",
+        ),
+
+        # Email worker
         email_worker_batch_size=max(
             1,
             min(
@@ -228,6 +280,7 @@ def load_settings() -> Settings:
             ),
         ),
 
+        # QR compatibility
         allow_legacy_qr=_env(
             "ALLOW_LEGACY_QR",
             "false",

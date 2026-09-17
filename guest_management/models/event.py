@@ -4,24 +4,11 @@
 The legacy ``logo`` and ``wedding_invitation`` fields are intentionally
 retained for backward compatibility.
 
-New events should eventually use the Google Drive metadata fields:
+New event assets are stored in Supabase Storage, with metadata tracked
+through the corresponding ``*_storage_path``, ``*_filename``, and
+``*_mime_type`` fields.
 
-    event_drive_folder_id
-
-    logo_drive_file_id
-    logo_filename
-    logo_mime_type
-
-    invitation_drive_file_id
-    invitation_filename
-    invitation_mime_type
-
-    guest_list_drive_file_id
-    guest_list_filename
-    guest_list_mime_type
-    guest_list_uploaded_at
-
-The actual migration from base64 assets to Google Drive is handled in
+The migration from legacy asset data to Supabase Storage is handled in
 the create-event / asset-service layer and is NOT performed here.
 """
 
@@ -46,7 +33,7 @@ class Event:
     """Event data model.
 
     Legacy image fields remain available so existing events continue
-    working while the application migrates image storage to Google Drive.
+    working while the application migrates image storage to Supabase Storage.
     """
 
     id: int
@@ -78,45 +65,34 @@ class Event:
     wedding_invitation: str = ""
 
     # ------------------------------------------------------------------
-    # GOOGLE DRIVE EVENT FOLDER
-    # ------------------------------------------------------------------
-    #
-    # Each event can have its own folder under:
-    #
-    # EventLah Attendance/
-    #
-    # This stores only the Google Drive folder ID.
-    #
-
-    event_drive_folder_id: str = ""
-
-    # ------------------------------------------------------------------
-    # GOOGLE DRIVE EVENT LOGO
+    # ASSET STORAGE
     # ------------------------------------------------------------------
 
-    logo_drive_file_id: str = ""
-    logo_filename: str = ""
-    logo_mime_type: str = ""
 
-    # ------------------------------------------------------------------
-    # GOOGLE DRIVE INVITATION CARD
-    # ------------------------------------------------------------------
 
-    invitation_drive_file_id: str = ""
-    invitation_filename: str = ""
-    invitation_mime_type: str = ""
 
-    # ------------------------------------------------------------------
-    # GOOGLE DRIVE GUEST LIST
-    # ------------------------------------------------------------------
 
-    guest_list_drive_file_id: str = ""
-    guest_list_filename: str = ""
-    guest_list_mime_type: str = ""
-    guest_list_uploaded_at: Optional[datetime] = None
+
+
 
     created_at: Optional[datetime] = None
 
+    # ------------------------------------------------------------------
+    # SUPABASE STORAGE ASSETS
+    # ------------------------------------------------------------------
+
+    logo_storage_path: str = ""
+    logo_filename: str = ""
+    logo_mime_type: str = ""
+
+    invitation_storage_path: str = ""
+    invitation_filename: str = ""
+    invitation_mime_type: str = ""
+
+    guest_list_storage_path: str = ""
+    guest_list_filename: str = ""
+    guest_list_mime_type: str = ""
+    guest_list_uploaded_at: Optional[datetime] = None
     # ==================================================================
     # FACTORY
     # ==================================================================
@@ -231,76 +207,53 @@ class Event:
                 or ""
             ),
 
-            # ----------------------------------------------------------
-            # Google Drive event folder
-            # ----------------------------------------------------------
+            logo_storage_path=str(data.get("logo_storage_path") or ""),
+            logo_filename=str(data.get("logo_filename") or ""),
+            logo_mime_type=str(data.get("logo_mime_type") or ""),
 
-            event_drive_folder_id=str(
-                data.get("event_drive_folder_id")
-                or ""
+            invitation_storage_path=str(
+                data.get("invitation_storage_path") or ""
             ),
-
-            # ----------------------------------------------------------
-            # Google Drive logo
-            # ----------------------------------------------------------
-
-            logo_drive_file_id=str(
-                data.get("logo_drive_file_id")
-                or ""
-            ),
-
-            logo_filename=str(
-                data.get("logo_filename")
-                or ""
-            ),
-
-            logo_mime_type=str(
-                data.get("logo_mime_type")
-                or ""
-            ),
-
-            # ----------------------------------------------------------
-            # Google Drive invitation
-            # ----------------------------------------------------------
-
-            invitation_drive_file_id=str(
-                data.get("invitation_drive_file_id")
-                or ""
-            ),
-
             invitation_filename=str(
-                data.get("invitation_filename")
-                or ""
+                data.get("invitation_filename") or ""
             ),
-
             invitation_mime_type=str(
-                data.get("invitation_mime_type")
-                or ""
+                data.get("invitation_mime_type") or ""
             ),
 
-            # ----------------------------------------------------------
-            # Google Drive guest list
-            # ----------------------------------------------------------
-
-            guest_list_drive_file_id=str(
-                data.get("guest_list_drive_file_id")
-                or ""
+            guest_list_storage_path=str(
+                data.get("guest_list_storage_path") or ""
             ),
-
             guest_list_filename=str(
-                data.get("guest_list_filename")
-                or ""
+                data.get("guest_list_filename") or ""
             ),
-
             guest_list_mime_type=str(
-                data.get("guest_list_mime_type")
-                or ""
+                data.get("guest_list_mime_type") or ""
             ),
 
             guest_list_uploaded_at=guest_list_uploaded_at,
 
             created_at=created_at,
         )
+
+    # ==================================================================
+    # SUPABASE STORAGE HELPERS
+    # ==================================================================
+
+    @property
+    def has_storage_logo(self) -> bool:
+        """Whether a Supabase Storage logo is configured."""
+        return bool(self.logo_storage_path)
+
+    @property
+    def has_storage_invitation(self) -> bool:
+        """Whether a Supabase Storage invitation is configured."""
+        return bool(self.invitation_storage_path)
+
+    @property
+    def has_storage_guest_list(self) -> bool:
+        """Whether a Supabase Storage guest list is configured."""
+        return bool(self.guest_list_storage_path)
 
     # ==================================================================
     # SERIALIZATION
@@ -310,6 +263,21 @@ class Event:
         """Convert Event to a repository/database-friendly dictionary."""
 
         return {
+            # Supabase Storage logo.
+            "logo_storage_path": self.logo_storage_path,
+            "logo_filename": self.logo_filename,
+            "logo_mime_type": self.logo_mime_type,
+
+            # Supabase Storage invitation.
+            "invitation_storage_path": self.invitation_storage_path,
+            "invitation_filename": self.invitation_filename,
+            "invitation_mime_type": self.invitation_mime_type,
+
+            # Supabase Storage guest list.
+            "guest_list_storage_path": self.guest_list_storage_path,
+            "guest_list_filename": self.guest_list_filename,
+            "guest_list_mime_type": self.guest_list_mime_type,
+            "guest_list_uploaded_at": self.guest_list_uploaded_at,
             "id": self.id,
             "name": self.name,
             "event_type": self.event_type.value,
@@ -326,73 +294,12 @@ class Event:
             "logo": self.logo,
             "wedding_invitation": self.wedding_invitation,
 
-            # Google Drive event folder.
-            "event_drive_folder_id": self.event_drive_folder_id,
 
-            # Google Drive logo.
-            "logo_drive_file_id": self.logo_drive_file_id,
-            "logo_filename": self.logo_filename,
-            "logo_mime_type": self.logo_mime_type,
 
-            # Google Drive invitation.
-            "invitation_drive_file_id": (
-                self.invitation_drive_file_id
-            ),
-            "invitation_filename": (
-                self.invitation_filename
-            ),
-            "invitation_mime_type": (
-                self.invitation_mime_type
-            ),
-
-            # Google Drive guest list.
-            "guest_list_drive_file_id": (
-                self.guest_list_drive_file_id
-            ),
-            "guest_list_filename": (
-                self.guest_list_filename
-            ),
-            "guest_list_mime_type": (
-                self.guest_list_mime_type
-            ),
-            "guest_list_uploaded_at": (
-                self.guest_list_uploaded_at
-            ),
 
             "created_at": self.created_at,
         }
 
-    # ==================================================================
-    # GOOGLE DRIVE HELPERS
-    # ==================================================================
-
-    @property
-    def has_drive_folder(self) -> bool:
-        """Whether a Google Drive event folder is configured."""
-        return bool(
-            self.event_drive_folder_id
-        )
-
-    @property
-    def has_drive_logo(self) -> bool:
-        """Whether a Google Drive logo is configured."""
-        return bool(
-            self.logo_drive_file_id
-        )
-
-    @property
-    def has_drive_invitation(self) -> bool:
-        """Whether a Google Drive invitation card is configured."""
-        return bool(
-            self.invitation_drive_file_id
-        )
-
-    @property
-    def has_drive_guest_list(self) -> bool:
-        """Whether a Google Drive guest list is configured."""
-        return bool(
-            self.guest_list_drive_file_id
-        )
 
     # ==================================================================
     # LEGACY ASSET HELPERS
@@ -419,19 +326,15 @@ class Event:
     @property
     def has_logo(self) -> bool:
         """Whether any logo asset is available."""
-        return (
-            self.has_drive_logo
-            or self.has_legacy_logo
-        )
+        return self.has_storage_logo or self.has_legacy_logo
 
     @property
     def has_invitation(self) -> bool:
         """Whether any invitation asset is available."""
         return (
-            self.has_drive_invitation
-            or self.has_legacy_invitation
+                self.has_storage_invitation
+                or self.has_legacy_invitation
         )
-
     # ==================================================================
     # FORMATTING
     # ==================================================================

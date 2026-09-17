@@ -1,114 +1,190 @@
-"""Authentication service using Google OAuth and application sessions."""
-from urllib.parse import urlencode
+"""Authentication service using Supabase Auth."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
 from guest_management.repositories.auth_repository import AuthRepository
-from guest_management.core.config import settings
-from guest_management.services.google_drive_service import encrypt_refresh_token
+
+logger = logging.getLogger(__name__)
+
 
 class AuthService:
-    def __init__(self): self.repo = AuthRepository()
+    """Application service for authentication.
 
-    def google_authorization_url(self, state: str) -> str:
-        params = {
-            "client_id": settings.google_client_id,
-            "redirect_uri": settings.google_redirect_uri,
-            "response_type": "code",
+    Supabase Auth is responsible for authentication and token issuance.
+    EventLah's public.users profile is responsible for application-level
+    authorization and account status.
+    """
 
-            "scope": (
-                "openid email profile "
-                "https://www.googleapis.com/auth/drive"
-            ),
+    def __init__(
+        self,
+        repo: AuthRepository | None = None,
+    ):
+        self.repo = repo or AuthRepository()
 
-            "state": state,
+    # ------------------------------------------------------------------
+    # Supabase authentication
+    # ------------------------------------------------------------------
 
-            # Important for obtaining a refresh token.
-            "access_type": "offline",
+    def login(
+        self,
+        email: str,
+        password: str,
+    ) -> dict[str, Any]:
+        """Authenticate an EventLah user using Supabase Auth.
 
-            # Force Google to issue a fresh authorization grant.
-            "prompt": "consent",
+        Returns:
 
-            # Explicitly request account selection.
-            "include_granted_scopes": "true",
+            {
+                "user": EventLah user profile,
+                "access_token": Supabase access token,
+                "refresh_token": Supabase refresh token,
+            }
+
+        Authentication is performed by Supabase Auth. The EventLah
+        profile is then checked for application authorization.
+        """
+        email = email.strip().lower()
+
+        if not email:
+            raise ValueError("Email is required.")
+
+        if not password:
+            raise ValueError("Password is required.")
+
+        logger.info(
+            "EventLah authentication attempt for %s",
+            email,
+        )
+
+        result = self.repo.sign_in_with_password(
+            email=email,
+            password=password,
+        )
+
+        user = result.get("user")
+
+        if not user:
+            raise RuntimeError(
+                "Authentication succeeded but no EventLah user "
+                "profile was returned."
+            )
+
+        logger.info(
+            "EventLah authentication successful for user %s",
+            user.get("id"),
+        )
+
+        return {
+            "user": user,
+            "access_token": result["access_token"],
+            "refresh_token": result.get("refresh_token", ""),
         }
+
+    def get_current_user(
+        self,
+        access_token: str | None,
+    ) -> Optional[dict[str, Any]]:
+        """Validate a Supabase access token and return the EventLah user."""
+        if not access_token:
+            return None
+
+        return self.repo.get_user_by_access_token(
+            access_token
+        )
+
+    def logout(
+            self,
+            access_token: str | None,
+            refresh_token: str | None,
+    ) -> None:
+        """Sign out the current Supabase Auth session."""
+        if not access_token or not refresh_token:
+            logger.info(
+                "EventLah logout requested without a complete session."
+            )
+            return
+
+        self.repo.sign_out(
+            access_token=access_token,
+            refresh_token=refresh_token,
+        )
+
+        logger.info(
+            "EventLah Supabase authentication logout completed."
+        )
+
+    def refresh_session(
+            self,
+            refresh_token: str | None,
+    ) -> dict | None:
+        """Refresh the current Supabase authentication session."""
+
+        if not refresh_token:
+            return None
+
+        return self.repo.refresh_session(
+            refresh_token=refresh_token,
+        )
+
+    # ------------------------------------------------------------------
+    # Authorization helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def can_manage_events(
+        user: dict[str, Any] | None,
+    ) -> bool:
+        """Return whether the user may manage EventLah events."""
+        if not user:
+            return False
+
+        if not user.get("is_active", False):
+            return False
+
+        role = str(
+            user.get("role") or ""
+        ).strip().upper()
+
+        return role in {
+            "OWNER",
+            "ADMIN",
+        }
+
+    @staticmethod
+    def is_owner(
+        user: dict[str, Any] | None,
+    ) -> bool:
+        """Return whether the user has OWNER privileges."""
+        if not user:
+            return False
+
+        if not user.get("is_active", False):
+            return False
 
         return (
-                "https://accounts.google.com/o/oauth2/v2/auth?"
-                + urlencode(params)
+            str(user.get("role") or "")
+            .strip()
+            .upper()
+            == "OWNER"
         )
 
-    def exchange_code(self, code: str) -> dict:
-        import httpx
+    @staticmethod
+    def is_admin(
+        user: dict[str, Any] | None,
+    ) -> bool:
+        """Return whether the user has ADMIN privileges."""
+        if not user:
+            return False
 
-        response = httpx.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "code": code,
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "redirect_uri": settings.google_redirect_uri,
-                "grant_type": "authorization_code",
-            },
-            timeout=15,
+        if not user.get("is_active", False):
+            return False
+
+        return (
+            str(user.get("role") or "")
+            .strip()
+            .upper()
+            == "ADMIN"
         )
-
-        response.raise_for_status()
-
-        payload = response.json()
-
-        user_info = self.repo.verify_google_id_token(
-            payload["id_token"]
-        )
-
-        if not user_info:
-            raise ValueError(
-                "Google identity verification failed"
-            )
-
-        # ------------------------------------------------------
-        # EventLah creator authorization
-        # ------------------------------------------------------
-
-        google_email = (
-                user_info.get("email") or ""
-        ).strip().lower()
-
-        if not settings.is_event_creator(google_email):
-            raise PermissionError(
-                "This Google account is not authorized "
-                "to create EventLah events."
-            )
-
-        # ------------------------------------------------------
-        # Create/update local user
-        # ------------------------------------------------------
-
-        user = self.repo.upsert_google_user(
-            user_info
-        )
-
-        refresh = payload.get("refresh_token")
-
-        if refresh:
-            self.repo.set_drive_refresh_token(
-                user["id"],
-                encrypt_refresh_token(refresh),
-            )
-        else:
-            # Keep the existing token if Google did not return a new one.
-            existing = user.get("google_refresh_token_enc")
-
-            if not existing:
-                raise RuntimeError(
-                    "Google authorization succeeded, but Google did not "
-                    "return a Drive refresh token."
-                )
-        return {
-            "user": self.repo.get_user(
-                user["id"]
-            ),
-            "session": self.repo.create_session(
-                user["id"]
-            ),
-        }
-
-    def get_current_user(self, session_token: str | None): return self.repo.get_user_by_session(session_token or "")
-    def logout(self, session_token: str | None): self.repo.revoke_session(session_token or "")

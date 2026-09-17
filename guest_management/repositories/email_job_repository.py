@@ -555,6 +555,85 @@ class EmailJobRepository:
         )
 
     # ==================================================================
+    # RECOVER STALE PROCESSING JOBS
+    # ==================================================================
+
+    def recover_stale_processing_jobs(
+        self,
+        max_age_minutes: int = 15,
+    ) -> int:
+        """
+        Requeue processing jobs whose worker lease has expired.
+
+        A stale processing job is one that has remained PROCESSING
+        longer than max_age_minutes.
+
+        Attempts are intentionally preserved. A recovered job will
+        receive its next attempt number when claim_batch() claims it.
+
+        Returns the number of recovered jobs.
+        """
+
+        max_age_minutes = max(
+            1,
+            int(max_age_minutes),
+        )
+
+        now = self._now()
+        cutoff = now - timedelta(
+            minutes=max_age_minutes,
+        )
+
+        try:
+            with engine.begin() as conn:
+                result = conn.execute(
+                    text(
+                        """
+                        UPDATE email_jobs
+                        SET
+                            status = 'queued',
+                            available_at = :available_at,
+                            locked_at = NULL,
+                            updated_at = :updated_at
+                        WHERE status = 'processing'
+                          AND locked_at IS NOT NULL
+                          AND locked_at < :cutoff
+                        """
+                    ),
+                    {
+                        "available_at": now,
+                        "updated_at": now,
+                        "cutoff": cutoff,
+                    },
+                )
+
+                recovered = int(
+                    result.rowcount or 0
+                )
+
+                if recovered:
+                    logger.warning(
+                        "Recovered %s stale processing email job(s)",
+                        recovered,
+                    )
+
+                return recovered
+
+        except SQLAlchemyError as exc:
+            self._raise_db(
+                "recover stale email jobs",
+                exc,
+            )
+
+        except Exception as exc:
+            self._raise_db(
+                "recover stale email jobs",
+                exc,
+            )
+
+        return 0
+
+    # ==================================================================
     # CLAIM JOBS
     # ==================================================================
 
@@ -582,6 +661,46 @@ class EmailJobRepository:
 
         try:
             with engine.begin() as conn:
+
+                # ------------------------------------------------------
+                # Recover stale processing jobs
+                # ------------------------------------------------------
+
+                stale_cutoff = now - timedelta(
+                    minutes=15,
+                )
+
+                recovered = conn.execute(
+                    text(
+                        """
+                        UPDATE email_jobs
+                        SET
+                            status = 'queued',
+                            available_at = :available_at,
+                            locked_at = NULL,
+                            updated_at = :updated_at
+                        WHERE status = 'processing'
+                          AND locked_at IS NOT NULL
+                          AND locked_at < :cutoff
+                        """
+                    ),
+                    {
+                        "available_at": now,
+                        "updated_at": now,
+                        "cutoff": stale_cutoff,
+                    },
+                )
+
+                recovered_count = int(
+                    recovered.rowcount or 0
+                )
+
+                if recovered_count:
+                    logger.warning(
+                        "Recovered %s stale processing "
+                        "email job(s)",
+                        recovered_count,
+                    )
 
                 rows = conn.execute(
                     text(
@@ -619,6 +738,7 @@ class EmailJobRepository:
                             UPDATE email_jobs
                             SET
                                 status = 'processing',
+                                attempts = COALESCE(attempts, 0) + 1,
                                 locked_at = :locked_at,
                                 updated_at = :updated_at
                             WHERE id = :id
@@ -892,7 +1012,7 @@ class EmailJobRepository:
                         """
                         UPDATE guests
                         SET
-                            email_sent = 1,
+                            email_sent = TRUE,
                             updated_at = :updated_at
                         WHERE event_id = :event_id
                           AND guest_id = :guest_id

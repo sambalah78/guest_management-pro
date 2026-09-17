@@ -31,22 +31,31 @@ from guest_management.core.security import (
     verify_qr_token,
 )
 from guest_management.repositories.checkin_repository import CheckinRepository
-
+from guest_management.services.scanner_station_auth_service import (
+    ScannerStationAuthService,
+)
 
 class CheckinService:
     """Application service for authenticated guest check-in."""
 
     def __init__(
-        self,
-        repository: CheckinRepository | None = None,
+            self,
+            repository: CheckinRepository | None = None,
+            scanner_auth_service: ScannerStationAuthService | None = None,
     ):
         self.repository = repository or CheckinRepository()
+        self.scanner_auth_service = (
+                scanner_auth_service or ScannerStationAuthService()
+        )
 
     def check_in(
         self,
         event_id: int,
         raw_scan: str,
         scanner_id: str = "",
+        *,
+        scanner_access_token: str = "",
+        manual: bool = False,
     ) -> Dict[str, Any]:
         """Validate a QR code and perform an atomic check-in.
 
@@ -80,50 +89,100 @@ class CheckinService:
             raise ValidationError("Invalid event ID")
 
         # --------------------------------------------------------------
-        # 2. Extract QR payload
+        # 2–4. Resolve and validate check-in input
         # --------------------------------------------------------------
-        guest_id, token, embedded_event_id = extract_scan_payload(
-            raw_scan
-        )
+        if manual:
+            # Manual check-in receives an already-resolved guest ID.
+            # GuestState is responsible for authenticating the staff/admin
+            # and resolving the guest within the selected event.
+            guest_id = str(raw_scan or "").strip()
 
-        if not guest_id:
-            raise ValidationError(
-                "QR code does not contain a guest ID"
-            )
-
-        # --------------------------------------------------------------
-        # 3. Prevent cross-event QR usage
-        # --------------------------------------------------------------
-        if (
-            embedded_event_id
-            and embedded_event_id != str(event_id)
-        ):
-            raise ValidationError(
-                "QR code belongs to a different event"
-            )
-
-        # --------------------------------------------------------------
-        # 4. Validate signed QR / legacy QR
-        # --------------------------------------------------------------
-        allow_legacy = (
-            os.getenv("ALLOW_LEGACY_QR", "false").lower()
-            in {"1", "true", "yes"}
-        )
-
-        if token:
-            if not verify_qr_token(
-                event_id,
-                guest_id,
-                token,
-            ):
+            if not guest_id:
                 raise ValidationError(
-                    "Invalid or tampered QR code"
+                    "Guest ID is required for manual check-in"
                 )
 
-        elif not allow_legacy:
-            raise ValidationError(
-                "Legacy QR codes are disabled"
+        else:
+            # Normal scanner/QR check-in path.
+            guest_id, token, embedded_event_id = extract_scan_payload(
+                raw_scan
             )
+
+            if not guest_id:
+                raise ValidationError(
+                    "QR code does not contain a guest ID"
+                )
+
+            # --------------------------------------------------------------
+            # Prevent cross-event QR usage
+            # --------------------------------------------------------------
+            if (
+                    embedded_event_id
+                    and embedded_event_id != str(event_id)
+            ):
+                raise ValidationError(
+                    "QR code belongs to a different event"
+                )
+
+            # --------------------------------------------------------------
+            # Validate signed QR / legacy QR
+            # --------------------------------------------------------------
+            allow_legacy = (
+                    os.getenv("ALLOW_LEGACY_QR", "false").lower()
+                    in {"1", "true", "yes"}
+            )
+
+            if token:
+                if not verify_qr_token(
+                        event_id,
+                        guest_id,
+                        token,
+                ):
+                    raise ValidationError(
+                        "Invalid or tampered QR code"
+                    )
+
+            elif not allow_legacy:
+                raise ValidationError(
+                    "Legacy QR codes are disabled"
+                )
+
+        # --------------------------------------------------------------
+        # 5. Authorize scanner station at the service boundary
+        # --------------------------------------------------------------
+        #
+        # ScannerState performs the same check for UI/state protection,
+        # but the service must independently enforce the security boundary.
+        #
+        # Manual/admin check-ins intentionally do not require a scanner
+        # station credential.
+        #
+        if not manual and scanner_id:
+            scanner_token = str(scanner_access_token or "").strip()
+
+            if not scanner_token:
+                raise ValidationError(
+                    "Scanner station authentication required"
+                )
+
+            scanner = self.scanner_auth_service.authenticate(
+                event_id=event_id,
+                access_token=scanner_token,
+            )
+
+            if not scanner:
+                raise ValidationError(
+                    "Invalid, inactive, or incorrectly assigned scanner station"
+                )
+
+            authenticated_scanner_id = str(
+                scanner.get("device_id") or ""
+            ).strip()
+
+            if authenticated_scanner_id != str(scanner_id).strip():
+                raise ValidationError(
+                    "Scanner station identity mismatch"
+                )
 
         # --------------------------------------------------------------
         # 5. Atomic database check-in

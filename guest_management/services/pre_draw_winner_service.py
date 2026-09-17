@@ -62,6 +62,7 @@ class PreDrawWinnerService:
         self,
         event_id: int,
         winners: List[Dict[str, Any]],
+        event_type: str = "",
     ) -> List[Dict[str, Any]]:
         """
         Validate preliminary winners against the event's attending guests.
@@ -72,6 +73,7 @@ class PreDrawWinnerService:
         """
 
         event_id = int(event_id)
+        event_type = str(event_type or "").strip().lower()
 
         if not winners:
             raise ValueError("No preliminary winners were provided.")
@@ -108,7 +110,9 @@ class PreDrawWinnerService:
             )
 
         # --------------------------------------------------------------
-        # Load attending guests from the existing guest repository.
+        # Load participants from the existing guest repository.
+        # Pre-draw validation uses every guest/participant uploaded for the event.
+        # It must not depend on live check-in status.
         # --------------------------------------------------------------
 
         guest_map: Dict[str, Dict[str, Any]] = {}
@@ -132,6 +136,10 @@ class PreDrawWinnerService:
                 ).strip()
 
                 if guest_id:
+                    # Pre-draw winners are validated against the event's
+                    # uploaded participant/guest list, not live check-in status.
+                    # Check-in is a live attendance state and may be empty
+                    # before the event starts.
                     guest_map[guest_id.lower()] = guest
 
             if len(rows) < page_size:
@@ -144,7 +152,7 @@ class PreDrawWinnerService:
 
         if not guest_map:
             raise ValueError(
-                "No attending guests have been uploaded for this event."
+                "No guests/participants have been uploaded for this event."
             )
 
         # --------------------------------------------------------------
@@ -196,9 +204,10 @@ class PreDrawWinnerService:
         if missing_ids:
             missing_text = ", ".join(missing_ids)
 
+            label = "participant list" if event_type == "lucky_draw" else "checked-in guest list"
             raise ValueError(
                 "The following preliminary winner Guest ID(s) are not "
-                f"present in the attending guest list: {missing_text}"
+                f"present in the event {label}: {missing_text}"
             )
 
         return normalized_winners
@@ -211,6 +220,7 @@ class PreDrawWinnerService:
         self,
         event_id: int,
         winners: List[Dict[str, Any]],
+        event_type: str = "",
     ) -> List[Dict[str, Any]]:
         """
         Validate and replace the complete preliminary-winner list.
@@ -224,6 +234,7 @@ class PreDrawWinnerService:
         validated = self.validate_winners(
             event_id,
             winners,
+            event_type=event_type,
         )
 
         return self.winner_repository.replace_for_event(
@@ -239,6 +250,7 @@ class PreDrawWinnerService:
         self,
         event_id: int,
         content: bytes,
+        event_type: str = "",
     ) -> List[Dict[str, Any]]:
         """
         Parse, validate and persist a preliminary-winner Excel file.
@@ -251,6 +263,7 @@ class PreDrawWinnerService:
         return self.replace_for_event(
             event_id,
             winners,
+            event_type=event_type,
         )
 
     # ------------------------------------------------------------------

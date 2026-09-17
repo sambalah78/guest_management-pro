@@ -30,9 +30,10 @@ import reflex as rx
 
 from guest_management.core.exceptions import EventLahError
 from guest_management.repositories import (
-    EventRepository,
+
     GuestRepository,
 )
+from guest_management.services.event_service import EventService
 from guest_management.repositories.email_job_repository import (
     EmailJobRepository,
 )
@@ -276,16 +277,17 @@ class EmailState(rx.State):
                 event_id
             )
 
-            user_id = await self._current_user_id()
+            from guest_management.state.auth_state import AuthState
 
-            if not user_id:
-                raise ValueError(
-                    "Authentication required."
-                )
+            auth = await self.get_state(AuthState)
 
-            event = EventRepository().get_by_id(
+            if not auth.user_id:
+                raise ValueError("Not authenticated.")
+
+            event = EventService().get_event(
                 event_id,
-                user_id,
+                auth.user_id,
+                auth.user,
             )
 
             if not event:
@@ -393,16 +395,17 @@ class EmailState(rx.State):
                 event_id
             )
 
-            user_id = await self._current_user_id()
+            from guest_management.state.auth_state import AuthState
 
-            if not user_id:
-                raise ValueError(
-                    "Authentication required."
-                )
+            auth = await self.get_state(AuthState)
 
-            event = EventRepository().get_by_id(
+            if not auth.user_id:
+                raise ValueError("Not authenticated.")
+
+            event = EventService().get_event(
                 event_id,
-                user_id,
+                auth.user_id,
+                auth.user,
             )
 
             if not event:

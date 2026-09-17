@@ -1,29 +1,71 @@
-# guest_management/services/scanner_service.py
-"""Scanner service."""
+"""Scanner station business service."""
 
-import logging
-from typing import Optional, Dict, Any, List
+from __future__ import annotations
 
-from guest_management.repositories import ScannerRepository
-from guest_management.core.exceptions import ScannerError
+from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+from ..repositories.scanner_repository import ScannerRepository
 
 
 class ScannerService:
-    """Service for scanner operations."""
+    """Business operations for scanner stations."""
 
-    def __init__(self):
-        self.repo = ScannerRepository()
+    def __init__(self, repo: Optional[ScannerRepository] = None):
+        self.repo = repo or ScannerRepository()
 
     def get_scanners(self, event_id: int) -> List[Dict[str, Any]]:
-        """Get all scanners for an event."""
-        return self.repo.get_by_event(event_id)
+        return self.repo.get_by_event(int(event_id))
 
-    def initialize_scanners(self, event_id: int, count: int = 8) -> List[Dict[str, Any]]:
-        """Initialize scanners for an event."""
-        return self.repo.create_default_scanners(event_id, count)
+    def get_scanner(
+        self,
+        event_id: int,
+        device_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        return self.repo.get_by_device(
+            int(event_id),
+            str(device_id).strip(),
+        )
 
-    def record_scan(self, device_id: str) -> None:
-        """Record a scan event."""
-        self.repo.increment_scans(device_id)
+
+
+    def activate_scanner(
+        self,
+        event_id: int,
+        device_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        return self.repo.set_active(
+            event_id=int(event_id),
+            device_id=device_id,
+            is_active=True,
+        )
+
+    def deactivate_scanner(
+        self,
+        event_id: int,
+        device_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        return self.repo.set_active(
+            event_id=int(event_id),
+            device_id=device_id,
+            is_active=False,
+        )
+
+    def delete_scanner(
+        self,
+        event_id: int,
+        device_id: str,
+    ) -> bool:
+        return self.repo.delete(
+            event_id=int(event_id),
+            device_id=device_id,
+        )
+
+    def record_scan(
+        self,
+        event_id: int,
+        device_id: str,
+    ) -> None:
+        self.repo.increment_scans(
+            event_id=int(event_id),
+            device_id=device_id,
+        )

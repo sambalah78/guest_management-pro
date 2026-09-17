@@ -368,7 +368,7 @@ def _guest_table() -> rx.Component:
                                     ),
                                     spacing="1",
                                     align="center",
-                                    min_width="150px",
+                                    min_width="190px",
                                     wrap="wrap",
                                 ),
                                 padding="0.2em 0.5em",

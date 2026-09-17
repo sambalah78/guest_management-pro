@@ -31,7 +31,7 @@ def _summary_card(label, value, icon: str, icon_color: str):
         border_radius="12px",
         padding="1em",
         flex="1",
-        min_width="150px",
+        min_width="190px",
     )
 
 

@@ -51,15 +51,15 @@ def home():
             rx.center(
                 rx.vstack(
                     rx.image(
-                        src="/logonew.png",
-                        width=["250px", "300px", "350px", "400px"],
+                        src="/logo.png",
+                        width=["150px", "250px", "250px", "350px"],
                         height="auto",
                     ),
-                    rx.image(
-                        src="/word.png",
-                        width=["250px", "300px", "350px", "400px"],
-                        height="auto",
-                    ),
+                    # rx.image(
+                    #     src="/word.png",
+                    #     width=["150px", "170px", "200px", "250px"],
+                    #     height="auto",
+                    # ),
                     rx.heading(
                         "Smart Event Management",
                         font_size=["0.9em", "1.1em", "1.4em", "1.8em"],
