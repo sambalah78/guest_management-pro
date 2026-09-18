@@ -709,7 +709,12 @@ class GuestState(rx.State):
             if matches:
                 if len(matches) == 1:
                     guest = matches[0]
-                    result = CheckinService().check_in(event_id, guest["guest_id"], "MANUAL")
+                    result = CheckinService().check_in(
+                        event_id,
+                        guest["guest_id"],
+                        "MANUAL",
+                        manual=True,
+                    )
                     self._apply_manual_checkin_result(result, guest)
                     self.no_id_verification_open = False
                     yield rx.toast.warning(
@@ -757,7 +762,12 @@ class GuestState(rx.State):
             if not guest:
                 raise ValueError("No-ID guest registration could not be verified")
 
-            result = CheckinService().check_in(event_id, internal_guest_id, "MANUAL")
+            result = CheckinService().check_in(
+                event_id,
+                internal_guest_id,
+                "MANUAL",
+                manual=True,
+            )
             self._apply_manual_checkin_result(result, guest)
             self.no_id_verification_open = False
             self.no_id_name = ""
@@ -1204,18 +1214,6 @@ class GuestState(rx.State):
         from guest_management.core.security import create_qr_token
         return create_qr_token(int(event_id), guest_id)
 
-    async def validate_token(self, raw_qr: str):
-        """Validate and atomically check in a signed QR payload."""
-        try:
-
-            result = CheckinService().check_in(int(self.current_event_id), raw_qr)
-            query = f"guest_id={result.get('guest_id', '')}&token={result.get('receipt_token', '')}"
-            yield rx.redirect(f"/success/{self.current_event_id}?{query}")
-        except GuestAlreadyCheckedInError:
-            yield rx.toast.warning("Guest is already checked in")
-        except Exception:
-            logger.exception("QR validation failed")
-            yield rx.toast.error("Invalid or tampered QR code")
 
     def show_guest_qr_dialog(self, guest_id: str, guest_name: str, event_id: str):
         qr_image = self.generate_branded_qr(guest_id, event_id)
