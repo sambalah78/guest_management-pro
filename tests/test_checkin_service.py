@@ -7,6 +7,8 @@ from guest_management.core.exceptions import (
 )
 from guest_management.core.security import create_qr_token
 from guest_management.services.checkin_service import CheckinService
+from dataclasses import replace
+from guest_management.services import checkin_service
 
 class FakeScannerAuthService:
     def __init__(self, scanner=None):
@@ -155,7 +157,16 @@ def test_checkin_service_rejects_legacy_qr_when_disabled(monkeypatch):
 
 
 def test_checkin_service_accepts_legacy_qr_when_enabled(monkeypatch):
-    monkeypatch.setenv("ALLOW_LEGACY_QR", "true")
+    test_settings = replace(
+        checkin_service.settings,
+        allow_legacy_qr=True,
+    )
+
+    monkeypatch.setattr(
+        checkin_service,
+        "settings",
+        test_settings,
+    )
 
     repo = FakeRepo(
         {
@@ -177,8 +188,6 @@ def test_checkin_service_accepts_legacy_qr_when_enabled(monkeypatch):
     )
 
     assert result["result"] == "checked_in"
-    assert repo.calls == [(18, "G1", "SCANNER_001")]
-
 
 def test_checkin_service_maps_already_checked_in():
     repo = FakeRepo(

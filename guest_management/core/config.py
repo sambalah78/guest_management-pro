@@ -122,7 +122,10 @@ class Settings:
             raise ConfigurationError(
                 "SCANNER_STATION_SECRET must contain at least 32 characters"
             )
-
+        if self.is_production and self.allow_legacy_qr:
+            raise ConfigurationError(
+                "ALLOW_LEGACY_QR must be false in production"
+            )
 
 def load_settings() -> Settings:
     def integer(name: str, default: int) -> int:

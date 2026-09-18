@@ -16,8 +16,7 @@ Architecture:
 """
 
 from __future__ import annotations
-
-import os
+from guest_management.core.config import settings
 from typing import Any, Dict
 
 from guest_management.core.exceptions import (
@@ -127,10 +126,7 @@ class CheckinService:
             # --------------------------------------------------------------
             # Validate signed QR / legacy QR
             # --------------------------------------------------------------
-            allow_legacy = (
-                    os.getenv("ALLOW_LEGACY_QR", "false").lower()
-                    in {"1", "true", "yes"}
-            )
+            allow_legacy = settings.allow_legacy_qr
 
             if token:
                 if not verify_qr_token(

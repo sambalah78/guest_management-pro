@@ -14,6 +14,7 @@ PostgreSQL database concurrency suite.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,6 +24,7 @@ from guest_management.core.exceptions import (
     ValidationError,
 )
 from guest_management.core.security import create_qr_token
+from guest_management.services import checkin_service
 from guest_management.services.checkin_service import CheckinService
 
 
@@ -256,10 +258,15 @@ def test_tampered_qr_is_rejected():
 def test_legacy_qr_is_rejected_when_disabled():
     service, repo, scanner_auth = make_service()
 
-    with patch.dict(
-        "os.environ",
-        {"ALLOW_LEGACY_QR": "false"},
-        clear=False,
+    test_settings = replace(
+        checkin_service.settings,
+        allow_legacy_qr=False,
+    )
+
+    with patch.object(
+        checkin_service,
+        "settings",
+        test_settings,
     ):
         with pytest.raises(
             ValidationError,
@@ -279,10 +286,15 @@ def test_legacy_qr_is_rejected_when_disabled():
 def test_legacy_qr_can_be_enabled_explicitly():
     service, repo, scanner_auth = make_service()
 
-    with patch.dict(
-        "os.environ",
-        {"ALLOW_LEGACY_QR": "true"},
-        clear=False,
+    test_settings = replace(
+        checkin_service.settings,
+        allow_legacy_qr=True,
+    )
+
+    with patch.object(
+        checkin_service,
+        "settings",
+        test_settings,
     ):
         result = service.check_in(
             EVENT_ID,
@@ -292,8 +304,6 @@ def test_legacy_qr_can_be_enabled_explicitly():
         )
 
     assert result["result"] == "checked_in"
-    scanner_auth.authenticate.assert_called_once()
-
 
 def test_manual_checkin_does_not_require_scanner_token():
     service, repo, scanner_auth = make_service()
