@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+
 
 import reflex as rx
 
@@ -63,27 +63,7 @@ class AuthState(rx.State):
     auth_checked: bool = False
     is_loading: bool = False
 
-    # ------------------------------------------------------------------
-    # Local demo login
-    # ------------------------------------------------------------------
 
-    # Keep this for local development only.
-    DEMO_LOGIN_ENABLED: bool = (
-        os.getenv(
-            "EVENTLAH_DEMO_LOGIN",
-            "false",
-        ).lower()
-        == "true"
-    )
-
-    DEMO_EMAIL: str = (
-        os.getenv(
-            "INITIAL_ADMIN_EMAIL",
-            "demo@eventlah.local",
-        )
-        .strip()
-        .lower()
-    )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -118,22 +98,6 @@ class AuthState(rx.State):
         self.user = {}
         self.auth_error = ""
 
-    def _apply_demo_login(self):
-        """Apply the local development/demo account."""
-        self.user_id = "demo-eventlah-admin"
-        self.user_email = self.DEMO_EMAIL
-
-        self.user = {
-            "id": self.user_id,
-            "email": self.user_email,
-            "name": "EventLah Demo Admin",
-            "role": "OWNER",
-            "is_active": True,
-        }
-
-        self.is_authenticated = True
-        self.auth_checked = True
-        self.auth_error = ""
 
     # ------------------------------------------------------------------
     # Computed state
@@ -282,24 +246,7 @@ class AuthState(rx.State):
         finally:
             self.is_loading = False
 
-    # ------------------------------------------------------------------
-    # Demo login
-    # ------------------------------------------------------------------
 
-    async def login_with_demo(self):
-        """Fast local/demo login.
-
-        Never enable this on a public deployment.
-        """
-        if not self.DEMO_LOGIN_ENABLED:
-            yield rx.toast.error(
-                message="Demo login is disabled."
-            )
-            return
-
-        self._apply_demo_login()
-
-        yield rx.redirect("/events")
 
     # ------------------------------------------------------------------
     # Logout
@@ -414,9 +361,7 @@ class AuthState(rx.State):
 
     async def check_auth(self):
         """Validate the current Supabase access token."""
-        if self.DEMO_LOGIN_ENABLED:
-            self._apply_demo_login()
-            return
+
 
         path = (
             getattr(
@@ -446,22 +391,7 @@ class AuthState(rx.State):
 
     async def check_session_on_load(self):
         """Validate the authentication token when the app loads."""
-        if self.DEMO_LOGIN_ENABLED:
-            self._apply_demo_login()
 
-            if (
-                getattr(
-                    self.router.url,
-                    "path",
-                    "",
-                )
-                or ""
-            ) == "/login":
-                yield rx.redirect(
-                    "/events"
-                )
-
-            return
 
         user = self._get_valid_user()
 
