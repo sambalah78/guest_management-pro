@@ -1,61 +1,7 @@
 import asyncio
-from types import SimpleNamespace
 
 import guest_management.state.auth_state as auth_state_module
 from guest_management.state.auth_state import AuthState
-
-
-class FakeAuthService:
-    def __init__(
-        self,
-        *,
-        login_result=None,
-        current_user=None,
-        refresh_result=None,
-        login_error=None,
-        logout_error=None,
-    ):
-        self.login_result = login_result
-        self.current_user = current_user
-        self.refresh_result = refresh_result
-        self.login_error = login_error
-        self.logout_error = logout_error
-        self.login_calls = []
-        self.logout_calls = []
-        self.refresh_calls = []
-        self.current_user_calls = []
-
-    def login(self, email, password):
-        self.login_calls.append(
-            {
-                "email": email,
-                "password": password,
-            }
-        )
-
-        if self.login_error:
-            raise self.login_error
-
-        return self.login_result
-
-    def logout(self, access_token, refresh_token):
-        self.logout_calls.append(
-            {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-            }
-        )
-
-        if self.logout_error:
-            raise self.logout_error
-
-    def get_current_user(self, access_token):
-        self.current_user_calls.append(access_token)
-        return self.current_user
-
-    def refresh_session(self, refresh_token):
-        self.refresh_calls.append(refresh_token)
-        return self.refresh_result
 
 
 def make_user(
@@ -86,8 +32,6 @@ def make_state():
     state.user_email = ""
     state.auth_checked = False
     state.is_loading = False
-    state.access_token = ""
-    state.refresh_token = ""
 
     return state
 
@@ -101,13 +45,20 @@ def run_async_event(event):
         if hasattr(result, "__aiter__"):
             async for item in result:
                 results.append(item)
-        else:
+        elif hasattr(result, "__await__"):
             value = await result
             if value is not None:
                 results.append(value)
+        elif result is not None:
+            results.append(result)
 
     asyncio.run(runner())
     return results
+
+
+# ---------------------------------------------------------------------------
+# Local authentication state
+# ---------------------------------------------------------------------------
 
 
 def test_apply_user_normalizes_user_data():
@@ -140,11 +91,9 @@ def test_apply_user_without_id_is_not_authenticated():
     assert state.user_id == ""
 
 
-def test_clear_auth_state_removes_all_local_authentication_state():
+def test_clear_auth_state_removes_local_authentication_state():
     state = make_state()
 
-    state.access_token = "access-token"
-    state.refresh_token = "refresh-token"
     state.is_authenticated = True
     state.user_id = "user-123"
     state.user_email = "user@example.com"
@@ -153,13 +102,18 @@ def test_clear_auth_state_removes_all_local_authentication_state():
 
     state._clear_auth_state()
 
-    assert state.access_token == ""
-    assert state.refresh_token == ""
     assert state.is_authenticated is False
     assert state.user_id == ""
     assert state.user_email == ""
     assert state.user == {}
     assert state.auth_error == ""
+
+
+def test_auth_state_has_no_browser_token_fields():
+    state = make_state()
+
+    assert not hasattr(state, "access_token")
+    assert not hasattr(state, "refresh_token")
 
 
 def test_is_logged_in_requires_authenticated_user():
@@ -198,27 +152,22 @@ def test_is_owner_only_allows_owner():
     assert state.is_owner is False
 
 
+# ---------------------------------------------------------------------------
+# Login validation
+# ---------------------------------------------------------------------------
+
+
 def test_login_rejects_missing_email():
     state = make_state()
     state.username = ""
     state.password = "password"
 
-    fake = FakeAuthService()
-
-    auth_service = lambda: fake
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = auth_service
-
-    try:
-        run_async_event(state.login())
-    finally:
-        auth_state_module.AuthService = original
+    result = state.login()
 
     assert state.auth_error == "Please enter your email address."
     assert state.is_authenticated is False
     assert state.is_loading is False
-    assert fake.login_calls == []
+    assert result is not None
 
 
 def test_login_rejects_missing_password():
@@ -226,59 +175,81 @@ def test_login_rejects_missing_password():
     state.username = "USER@EXAMPLE.COM"
     state.password = ""
 
-    fake = FakeAuthService()
-
-    auth_service = lambda: fake
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = auth_service
-
-    try:
-        run_async_event(state.login())
-    finally:
-        auth_state_module.AuthService = original
+    result = state.login()
 
     assert state.auth_error == "Please enter your password."
     assert state.is_authenticated is False
     assert state.is_loading is False
-    assert fake.login_calls == []
+    assert result is not None
 
 
-def test_login_success_normalizes_email_stores_tokens_and_clears_password():
+# ---------------------------------------------------------------------------
+# Browser -> server login flow
+# ---------------------------------------------------------------------------
+
+
+def test_login_calls_server_session_endpoint(monkeypatch):
     state = make_state()
     state.username = "  USER@EXAMPLE.COM  "
     state.password = "secret-password"
+
+    captured = {}
+
+    def fake_call_script(script, callback=None):
+        captured["script"] = script
+        captured["callback"] = callback
+        return "LOGIN_EVENT"
+
+    monkeypatch.setattr(
+        auth_state_module.rx,
+        "call_script",
+        fake_call_script,
+    )
+
+    result = state.login()
+
+    assert result == "LOGIN_EVENT"
+    assert state.is_loading is True
+
+    script = captured["script"]
+
+    assert "/api/auth/session" in script
+    assert "fetch(" in script
+    assert '"POST"' in script
+    assert '"Content-Type": "application/json"' in script
+    assert "credentials" in script
+    assert '"include"' in script
+    # Credentials are supplied through the generated request body. Do not
+    # assert literal credential values in generated JavaScript.
+    assert "body:" in script
+    assert "secret-password" in script
+    assert captured["callback"] == AuthState.handle_login_result
+
+
+def test_handle_login_result_success_applies_user_and_clears_password():
+    state = make_state()
+
+    state.username = "user@example.com"
+    state.password = "secret-password"
+    state.is_loading = True
 
     user = make_user(
         email="user@example.com",
         role="ADMIN",
     )
 
-    fake = FakeAuthService(
-        login_result={
-            "access_token": "access-token",
-            "refresh_token": "refresh-token",
-            "user": user,
+    result = state.handle_login_result(
+        {
+            "ok": True,
+            "status": 200,
+            "data": {
+                "ok": True,
+                "user": user,
+            },
         }
     )
 
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        results = run_async_event(state.login())
-    finally:
-        auth_state_module.AuthService = original
-
-    assert fake.login_calls == [
-        {
-            "email": "user@example.com",
-            "password": "secret-password",
-        }
-    ]
-
-    assert state.access_token == "access-token"
-    assert state.refresh_token == "refresh-token"
+    assert result is not None
     assert state.user_id == "user-123"
     assert state.user_email == "user@example.com"
     assert state.is_authenticated is True
@@ -287,220 +258,248 @@ def test_login_success_normalizes_email_stores_tokens_and_clears_password():
     assert state.auth_error == ""
     assert state.is_loading is False
 
-    assert len(results) == 1
 
-
-def test_login_rejects_missing_user_in_service_result():
+def test_handle_login_result_rejects_missing_user():
     state = make_state()
-    state.username = "user@example.com"
-    state.password = "password"
+    state.password = "secret-password"
+    state.is_loading = True
 
-    fake = FakeAuthService(
-        login_result={
-            "access_token": "access-token",
-            "refresh_token": "refresh-token",
-            "user": None,
-        }
-    )
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        run_async_event(state.login())
-    finally:
-        auth_state_module.AuthService = original
-
-    assert "EventLah profile could not be found" in state.auth_error
-    assert state.is_authenticated is False
-    assert state.access_token == ""
-    assert state.refresh_token == ""
-    assert state.is_loading is False
-
-
-def test_login_rejects_missing_access_token():
-    state = make_state()
-    state.username = "user@example.com"
-    state.password = "password"
-
-    fake = FakeAuthService(
-        login_result={
-            "access_token": "",
-            "refresh_token": "refresh-token",
-            "user": make_user(),
-        }
-    )
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        run_async_event(state.login())
-    finally:
-        auth_state_module.AuthService = original
-
-    assert "no access token was returned" in state.auth_error
-    assert state.is_authenticated is False
-    assert state.is_loading is False
-
-
-def test_login_rejects_missing_refresh_token():
-    state = make_state()
-    state.username = "user@example.com"
-    state.password = "password"
-
-    fake = FakeAuthService(
-        login_result={
-            "access_token": "access-token",
-            "refresh_token": "",
-            "user": make_user(),
-        }
-    )
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        run_async_event(state.login())
-    finally:
-        auth_state_module.AuthService = original
-
-    assert "no refresh token was returned" in state.auth_error
-    assert state.is_authenticated is False
-    assert state.is_loading is False
-
-
-def test_login_permission_error_clears_auth_state():
-    state = make_state()
-    state.username = "user@example.com"
-    state.password = "password"
-
-    fake = FakeAuthService(
-        login_error=PermissionError("This EventLah account is inactive.")
-    )
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        run_async_event(state.login())
-    finally:
-        auth_state_module.AuthService = original
-
-    assert state.auth_error == ""
-    assert state.is_authenticated is False
-    assert state.access_token == ""
-    assert state.refresh_token == ""
-    assert state.is_loading is False
-
-
-def test_login_value_error_preserves_error_without_authentication():
-    state = make_state()
-    state.username = "user@example.com"
-    state.password = "password"
-
-    fake = FakeAuthService(
-        login_error=ValueError("Invalid credentials.")
-    )
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        run_async_event(state.login())
-    finally:
-        auth_state_module.AuthService = original
-
-    assert state.auth_error == "Invalid credentials."
-    assert state.is_authenticated is False
-    assert state.is_loading is False
-
-
-def test_login_unexpected_error_uses_generic_message_and_clears_state():
-    state = make_state()
-    state.username = "user@example.com"
-    state.password = "password"
-
-    fake = FakeAuthService(
-        login_error=RuntimeError("database exploded")
-    )
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        run_async_event(state.login())
-    finally:
-        auth_state_module.AuthService = original
-
-    assert state.auth_error == ""
-    assert state.is_authenticated is False
-    assert state.access_token == ""
-    assert state.refresh_token == ""
-    assert state.is_loading is False
-
-
-def test_logout_calls_service_and_clears_local_session():
-    state = make_state()
-
-    state.access_token = "access-token"
-    state.refresh_token = "refresh-token"
-    state._apply_user(make_user())
-
-    fake = FakeAuthService()
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        results = state.logout()
-    finally:
-        auth_state_module.AuthService = original
-
-    assert fake.logout_calls == [
+    state.handle_login_result(
         {
-            "access_token": "access-token",
-            "refresh_token": "refresh-token",
+            "ok": True,
+            "status": 200,
+            "data": {
+                "ok": True,
+                "user": None,
+            },
         }
-    ]
+    )
 
-    assert state.access_token == ""
-    assert state.refresh_token == ""
+    assert state.is_authenticated is False
+    assert state.user_id == ""
+    assert state.password == ""
+    assert state.is_loading is False
+    assert "profile could not be found" in state.auth_error.lower()
+
+
+def test_handle_login_result_handles_invalid_credentials():
+    state = make_state()
+    state.password = "secret-password"
+    state.is_loading = True
+
+    state.handle_login_result(
+        {
+            "ok": False,
+            "status": 401,
+            "data": {
+                "detail": "Invalid credentials.",
+            },
+        }
+    )
+
+    assert state.is_authenticated is False
+    assert state.password == ""
+    assert state.is_loading is False
+    assert state.auth_error == "Invalid credentials."
+
+
+def test_handle_login_result_handles_server_error():
+    state = make_state()
+    state.password = "secret-password"
+    state.is_loading = True
+
+    state.handle_login_result(
+        {
+            "ok": False,
+            "status": 500,
+            "data": {
+                "detail": "Internal server error.",
+            },
+        }
+    )
+
+    assert state.is_authenticated is False
+    assert state.password == ""
+    assert state.is_loading is False
+    assert state.auth_error != ""
+
+
+# ---------------------------------------------------------------------------
+# Logout
+# ---------------------------------------------------------------------------
+
+
+def test_logout_calls_server_logout_endpoint(monkeypatch):
+    state = make_state()
+    state._apply_user(make_user())
+    state.auth_checked = True
+
+    captured = {}
+
+    def fake_call_script(script, callback=None):
+        captured["script"] = script
+        captured["callback"] = callback
+        return "LOGOUT_EVENT"
+
+    monkeypatch.setattr(
+        auth_state_module.rx,
+        "call_script",
+        fake_call_script,
+    )
+
+    result = state.logout()
+
+    assert result == "LOGOUT_EVENT"
+
+    script = captured["script"]
+
+    assert "/api/auth/session/logout" in script
+    assert "fetch(" in script
+    assert '"POST"' in script
+    assert "credentials" in script
+    assert '"include"' in script
+    assert captured["callback"] == AuthState.handle_logout_result
+
+    # The API request is asynchronous. Local authentication state is cleared
+    # by handle_logout_result() after the browser callback completes.
+    assert state.is_authenticated is True
+    assert state.user_id == "user-123"
+    assert state.user_email == "user@example.com"
+    assert state.user == make_user()
+    assert state.auth_checked is True
+
+
+def test_handle_logout_result_clears_local_state():
+    state = make_state()
+    state._apply_user(make_user())
+    state.password = "secret"
+    state.auth_error = "old error"
+    state.is_loading = True
+
+    state.handle_logout_result(
+        {
+            "ok": True,
+            "status": 200,
+            "data": {
+                "ok": True,
+            },
+        }
+    )
+
     assert state.is_authenticated is False
     assert state.user_id == ""
     assert state.user_email == ""
     assert state.user == {}
+    assert state.password == ""
+    assert state.auth_error == ""
+    assert state.is_loading is False
     assert state.auth_checked is True
 
-    assert len(results) == 3
 
-
-def test_logout_clears_local_session_when_remote_logout_fails():
+def test_handle_logout_result_clears_local_state_even_when_server_fails():
     state = make_state()
-
-    state.access_token = "access-token"
-    state.refresh_token = "refresh-token"
     state._apply_user(make_user())
+    state.is_loading = True
 
-    fake = FakeAuthService(
-        logout_error=RuntimeError("Supabase unavailable")
+    state.handle_logout_result(
+        {
+            "ok": False,
+            "status": 500,
+            "data": {
+                "detail": "Logout failed.",
+            },
+        }
     )
 
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        results = state.logout()
-    finally:
-        auth_state_module.AuthService = original
-
-    assert state.access_token == ""
-    assert state.refresh_token == ""
     assert state.is_authenticated is False
     assert state.user_id == ""
+    assert state.user_email == ""
     assert state.user == {}
+    assert state.is_loading is False
     assert state.auth_checked is True
-    assert len(results) == 3
+
+
+# ---------------------------------------------------------------------------
+# Session resolution
+# ---------------------------------------------------------------------------
+
+
+def test_get_valid_user_delegates_to_server_side_session_resolver(monkeypatch):
+    state = make_state()
+    user = make_user()
+
+    calls = []
+
+    class FakeResolver:
+        def get_current_user(self):
+            calls.append("get_current_user")
+            return user
+
+    monkeypatch.setattr(
+        auth_state_module,
+        "AuthSessionResolver",
+        FakeResolver,
+    )
+
+    result = state._get_valid_user()
+
+    assert result == user
+    assert calls == ["get_current_user"]
+
+
+def test_get_valid_user_returns_none_when_no_server_session(monkeypatch):
+    state = make_state()
+
+    class FakeResolver:
+        def get_current_user(self):
+            return None
+
+    monkeypatch.setattr(
+        auth_state_module,
+        "AuthSessionResolver",
+        FakeResolver,
+    )
+
+    assert state._get_valid_user() is None
+
+
+def test_get_valid_user_handles_session_resolution_error(monkeypatch):
+    state = make_state()
+
+    class FakeResolver:
+        def get_current_user(self):
+            raise auth_state_module.AuthSessionResolutionError(
+                "Unable to resolve authenticated session."
+            )
+
+    monkeypatch.setattr(
+        auth_state_module,
+        "AuthSessionResolver",
+        FakeResolver,
+    )
+
+    assert state._get_valid_user() is None
+
+
+def test_get_valid_user_handles_unexpected_error(monkeypatch):
+    state = make_state()
+
+    class FakeResolver:
+        def get_current_user(self):
+            raise RuntimeError("database exploded")
+
+    monkeypatch.setattr(
+        auth_state_module,
+        "AuthSessionResolver",
+        FakeResolver,
+    )
+
+    assert state._get_valid_user() is None
+
+
+# ---------------------------------------------------------------------------
+# Route protection
+# ---------------------------------------------------------------------------
 
 
 def test_public_route_detection():
@@ -548,110 +547,7 @@ def test_empty_route_is_public():
     assert state._is_public_route("") is True
 
 
-def test_get_valid_user_uses_current_access_token():
-    state = make_state()
-    state.access_token = "access-token"
-
-    user = make_user()
-
-    fake = FakeAuthService(
-        current_user=user,
-    )
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        result = state._get_valid_user()
-    finally:
-        auth_state_module.AuthService = original
-
-    assert result == user
-    assert fake.current_user_calls == ["access-token"]
-    assert fake.refresh_calls == []
-
-
-def test_get_valid_user_refreshes_when_access_token_is_invalid():
-    state = make_state()
-    state.access_token = "expired-access-token"
-    state.refresh_token = "refresh-token"
-
-    refreshed_user = make_user()
-
-    fake = FakeAuthService(
-        current_user=None,
-        refresh_result={
-            "access_token": "new-access-token",
-            "refresh_token": "new-refresh-token",
-            "user": refreshed_user,
-        },
-    )
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        result = state._get_valid_user()
-    finally:
-        auth_state_module.AuthService = original
-
-    assert result == refreshed_user
-    assert fake.current_user_calls == ["expired-access-token"]
-    assert fake.refresh_calls == ["refresh-token"]
-    assert state.access_token == "new-access-token"
-    assert state.refresh_token == "new-refresh-token"
-
-
-def test_get_valid_user_returns_none_when_access_token_invalid_and_no_refresh_token():
-    state = make_state()
-    state.access_token = "expired-access-token"
-    state.refresh_token = ""
-
-    fake = FakeAuthService(
-        current_user=None,
-    )
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        result = state._get_valid_user()
-    finally:
-        auth_state_module.AuthService = original
-
-    assert result is None
-    assert fake.current_user_calls == ["expired-access-token"]
-    assert fake.refresh_calls == []
-
-
-def test_get_valid_user_rejects_incomplete_refresh_result():
-    state = make_state()
-    state.access_token = "expired-access-token"
-    state.refresh_token = "refresh-token"
-
-    fake = FakeAuthService(
-        current_user=None,
-        refresh_result={
-            "access_token": "new-access-token",
-            "refresh_token": "",
-            "user": make_user(),
-        },
-    )
-
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        result = state._get_valid_user()
-    finally:
-        auth_state_module.AuthService = original
-
-    assert result is None
-    assert state.access_token == "expired-access-token"
-    assert state.refresh_token == "refresh-token"
-
-
-def test_check_auth_allows_public_route_without_auth_lookup(monkeypatch):
+def test_check_auth_allows_public_route_without_session_lookup(monkeypatch):
     state = make_state()
 
     monkeypatch.setattr(
@@ -660,21 +556,19 @@ def test_check_auth_allows_public_route_without_auth_lookup(monkeypatch):
         lambda self, path: True,
     )
 
-    fake = FakeAuthService(
-        current_user=make_user(),
-    )
+    called = []
 
     monkeypatch.setattr(
-        auth_state_module,
-        "AuthService",
-        lambda: fake,
+        AuthState,
+        "_get_valid_user",
+        lambda self: called.append(True),
     )
 
     results = run_async_event(state.check_auth())
 
     assert results == []
     assert state.auth_checked is True
-    assert fake.current_user_calls == []
+    assert called == []
 
 
 def test_check_auth_redirects_protected_route_when_session_invalid(monkeypatch):
@@ -730,25 +624,25 @@ def test_check_auth_applies_valid_user_on_protected_route(monkeypatch):
     assert state.is_owner is True
 
 
-def test_check_session_on_load_restores_valid_session():
+# ---------------------------------------------------------------------------
+# Session restoration
+# ---------------------------------------------------------------------------
+
+
+def test_check_session_on_load_restores_valid_server_session(monkeypatch):
     state = make_state()
-    state.access_token = "access-token"
 
     user = make_user()
 
-    fake = FakeAuthService(
-        current_user=user,
+    monkeypatch.setattr(
+        AuthState,
+        "_get_valid_user",
+        lambda self: user,
     )
 
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        results = run_async_event(
-            state.check_session_on_load()
-        )
-    finally:
-        auth_state_module.AuthService = original
+    results = run_async_event(
+        state.check_session_on_load()
+    )
 
     assert results == []
     assert state.auth_checked is True
@@ -756,24 +650,19 @@ def test_check_session_on_load_restores_valid_session():
     assert state.user_id == "user-123"
 
 
-def test_check_session_on_load_clears_invalid_session_without_redirect():
+def test_check_session_on_load_clears_invalid_server_session(monkeypatch):
     state = make_state()
-    state.access_token = "expired-token"
-    state.refresh_token = ""
+    state._apply_user(make_user())
 
-    fake = FakeAuthService(
-        current_user=None,
+    monkeypatch.setattr(
+        AuthState,
+        "_get_valid_user",
+        lambda self: None,
     )
 
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        results = run_async_event(
-            state.check_session_on_load()
-        )
-    finally:
-        auth_state_module.AuthService = original
+    results = run_async_event(
+        state.check_session_on_load()
+    )
 
     assert results == []
     assert state.auth_checked is True
@@ -781,52 +670,48 @@ def test_check_session_on_load_clears_invalid_session_without_redirect():
     assert state.user_id == ""
 
 
-def test_ensure_valid_session_returns_true_and_applies_user():
+def test_ensure_valid_session_returns_true_and_applies_user(monkeypatch):
     state = make_state()
-    state.access_token = "access-token"
 
     user = make_user()
 
-    fake = FakeAuthService(
-        current_user=user,
+    monkeypatch.setattr(
+        AuthState,
+        "_get_valid_user",
+        lambda self: user,
     )
 
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        result = asyncio.run(
-            state.ensure_valid_session()
-        )
-    finally:
-        auth_state_module.AuthService = original
+    result = asyncio.run(
+        state.ensure_valid_session()
+    )
 
     assert result is True
     assert state.is_authenticated is True
     assert state.user_id == "user-123"
 
 
-def test_ensure_valid_session_returns_false_and_clears_state():
+def test_ensure_valid_session_returns_false_and_clears_state(monkeypatch):
     state = make_state()
-    state.access_token = "expired-token"
+    state._apply_user(make_user())
 
-    fake = FakeAuthService(
-        current_user=None,
+    monkeypatch.setattr(
+        AuthState,
+        "_get_valid_user",
+        lambda self: None,
     )
 
-    original = auth_state_module.AuthService
-    auth_state_module.AuthService = lambda: fake
-
-    try:
-        result = asyncio.run(
-            state.ensure_valid_session()
-        )
-    finally:
-        auth_state_module.AuthService = original
+    result = asyncio.run(
+        state.ensure_valid_session()
+    )
 
     assert result is False
     assert state.is_authenticated is False
     assert state.user_id == ""
+
+
+# ---------------------------------------------------------------------------
+# Input setters
+# ---------------------------------------------------------------------------
 
 
 def test_set_username_strips_value():
@@ -845,13 +730,11 @@ def test_set_password_preserves_value():
     assert state.password == "secret"
 
 
-def test_set_access_token_preserves_compatibility_behavior():
+def test_set_access_token_is_non_persistent_compatibility_noop():
     state = make_state()
 
-    state.set_access_token("access-token")
+    result = state.set_access_token("access-token")
 
-    assert state.access_token == "access-token"
-
-    state.set_access_token("")
-
-    assert state.access_token == ""
+    assert result is None
+    assert not hasattr(state, "access_token")
+    assert not hasattr(state, "refresh_token")
