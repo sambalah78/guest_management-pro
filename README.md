@@ -9,7 +9,7 @@ Production-oriented event and guest management application built with Python and
 - SQLAlchemy
 - Google OAuth
 - Google Drive (`drive.file`) for application files
-- SendGrid for email delivery
+- Gmail SMTP for email delivery
 - Durable email worker
 
 ## Local development

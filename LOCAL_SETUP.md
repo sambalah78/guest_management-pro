@@ -9,7 +9,7 @@ Local architecture:
 - SQLite database: `guest_management.db`
 - Google OAuth: Google Cloud OAuth client
 - Google Drive: authenticated user's Drive (`drive.file` scope)
-- SendGrid: optional for local testing, required for production email
+- Gmail SMTP: optional for local testing, required when email delivery is enabled
 
 ## 1. Install Python
 
@@ -239,8 +239,12 @@ Do not enable legacy/plain guest-ID QR codes.
 Set these in `.env`:
 
 ```text
-SENDGRID_API_KEY=...
-SENDER_EMAIL=verified-sender@example.com
+EMAIL_PROVIDER=gmail
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your-gmail-address@example.com
+SMTP_PASSWORD=your-gmail-app-password
+SENDER_EMAIL=your-gmail-address@example.com
 ```
 
 Then run the worker separately:
@@ -297,7 +301,7 @@ Do not deploy until all of these pass:
 - concurrent duplicate check-in test passes
 - voucher transaction concurrency test passes
 - email queue test passes
-- SendGrid delivery test passes
+- Gmail SMTP delivery test passes
 - PostgreSQL backup/restore has been tested
 - HTTPS is enabled
 - production `SESSION_SECRET` and `QR_SECRET` are long random values
