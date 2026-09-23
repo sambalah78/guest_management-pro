@@ -248,7 +248,7 @@ def _pre_draw_winner_upload_dialog():
                         color=GOLD,
                     ),
                     rx.heading(
-                        "Upload Pre-Draw Winners",
+                        "Upload Predetermined Winners",
                         size="5",
                         color=GOLD,
                     ),
@@ -787,6 +787,165 @@ def _prize_configuration_dialog():
     )
 
 
+def _pre_draw_prize_card():
+    """Configure prizes for system-generated random Pre-Draw."""
+    return rx.card(
+        rx.vstack(
+            rx.hstack(
+                rx.icon(
+                    tag="sparkles",
+                    size=18,
+                    color=GOLD,
+                ),
+                rx.vstack(
+                    rx.heading(
+                        "Random Pre-Draw",
+                        size="3",
+                        color="white",
+                    ),
+                    rx.text(
+                        "Configure prizes and generate winners before the event.",
+                        color=LIGHT_GRAY,
+                        font_size="0.72rem",
+                    ),
+                    spacing="0",
+                    align="start",
+                ),
+                width="100%",
+                spacing="2",
+            ),
+
+            rx.divider(),
+
+            rx.input(
+                placeholder="Prize name",
+                value=LuckyDrawState.pre_draw_prize_name,
+                on_change=LuckyDrawState.set_pre_draw_prize_name,
+                width="100%",
+            ),
+
+            rx.hstack(
+                rx.input(
+                    placeholder="Value",
+                    value=LuckyDrawState.pre_draw_prize_value,
+                    on_change=LuckyDrawState.set_pre_draw_prize_value,
+                    width="100%",
+                ),
+                rx.input(
+                    placeholder="Winner count",
+                    type="number",
+                    min="1",
+                    value=LuckyDrawState.pre_draw_prize_winner_count,
+                    on_change=LuckyDrawState.set_pre_draw_prize_winner_count,
+                    width="100%",
+                ),
+                width="100%",
+                spacing="2",
+            ),
+
+            rx.input(
+                placeholder="Image URL (optional)",
+                value=LuckyDrawState.pre_draw_prize_image_url,
+                on_change=LuckyDrawState.set_pre_draw_prize_image_url,
+                width="100%",
+            ),
+
+            rx.button(
+                rx.hstack(
+                    rx.icon(tag="plus", size=14),
+                    rx.text("Add Pre-Draw Prize"),
+                    spacing="2",
+                ),
+                on_click=LuckyDrawState.add_pre_draw_prize,
+                bg=GOLD,
+                color=BLACK,
+                width="100%",
+            ),
+
+            rx.vstack(
+                rx.foreach(
+                    LuckyDrawState.pre_draw_prizes,
+                    lambda prize: rx.hstack(
+                        rx.vstack(
+                            rx.text(
+                                prize["name"],
+                                color="white",
+                                font_weight="700",
+                            ),
+                            rx.text(
+                                prize["winner_count"].to_string()
+                                + " winner(s)",
+                                color=LIGHT_GRAY,
+                                font_size="0.68rem",
+                            ),
+                            rx.badge(
+                                prize["status"],
+                                color_scheme="amber",
+                                size="1",
+                            ),
+                            spacing="1",
+                            align="start",
+                        ),
+                        rx.spacer(),
+                        rx.button(
+                            "Archive",
+                            on_click=LuckyDrawState.archive_pre_draw_prize(
+                                prize["id"]
+                            ),
+                            variant="outline",
+                            border_color=GOLD,
+                            color=GOLD,
+                            size="1",
+                        ),
+                        width="100%",
+                        align="center",
+                        padding="0.65em",
+                        background=f"{GOLD}10",
+                        border_radius="8px",
+                    ),
+                ),
+                spacing="2",
+                width="100%",
+            ),
+
+            rx.text(
+                rx.cond(
+                    LuckyDrawState.pre_draw_winner_count > 0,
+                    "Winners already exist. Use CLEAR LIST before running a new random Pre-Draw.",
+                    "Random selection uses the uploaded guest list and does not require check-in.",
+                ),
+                color="gray",
+                font_size="0.68rem",
+            ),
+
+            rx.button(
+                rx.hstack(
+                    rx.icon(tag="shuffle", size=15),
+                    rx.text("Generate Random Winners"),
+                    spacing="2",
+                ),
+                on_click=LuckyDrawState.generate_random_pre_draw,
+                bg=GOLD,
+                color=BLACK,
+                width="100%",
+                disabled=(
+                    (LuckyDrawState.pre_draw_prize_count == 0)
+                    | (LuckyDrawState.pre_draw_winner_count > 0)
+                    | LuckyDrawState.pre_draw_generating
+                ),
+            ),
+
+            spacing="3",
+            width="100%",
+        ),
+        background=DARK_GRAY,
+        border="1px solid rgba(212, 175, 55, 0.35)",
+        border_radius="14px",
+        padding=["1em", "1.25em"],
+        width="100%",
+    )
+
+
 def _advanced_prize_setup():
     """Keep the existing prize manager available without making it the main UI."""
     return rx.card(
@@ -887,11 +1046,20 @@ def lucky_draw_page():
                 # Setup cards -------------------------------------------------
                 rx.grid(
                     _guest_list_card(),
-                    _pre_draw_winner_card(),
+                    rx.cond(
+                        LuckyDrawState.pre_draw_enabled,
+                        _pre_draw_winner_card(),
+                        rx.fragment(),
+                    ),
+                    rx.cond(
+                        LuckyDrawState.pre_draw_enabled,
+                        _pre_draw_prize_card(),
+                        rx.fragment(),
+                    ),
                     _prize_list_card(),
                     columns=rx.breakpoints(
                         initial="1fr",
-                        lg="repeat(3, minmax(0, 1fr))",
+                        lg="repeat(2, minmax(0, 1fr))",
                     ),
                     spacing="4",
                     width="100%",

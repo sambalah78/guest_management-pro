@@ -307,6 +307,53 @@ class PreDrawPrizeRepository(BaseRepository):
             {"status": "archived"},
         )
 
+    def reset_generated_for_event(
+        self,
+        event_id: int,
+    ) -> int:
+        """
+        Reset generated pre-draw prizes to READY.
+
+        Used when an administrator explicitly clears a generated
+        Pre-Draw and wants to prepare for a fresh random generation.
+        """
+        from sqlalchemy import select, update
+        from datetime import datetime, timezone
+
+        from guest_management.database import (
+            events,
+            pre_draw_prizes,
+        )
+
+        event_id = self._normalize_event_id(event_id)
+        now = datetime.now(timezone.utc)
+
+        with self.db.engine.begin() as conn:
+            event_row = conn.execute(
+                select(events.c.id)
+                .where(events.c.id == event_id)
+                .with_for_update()
+            ).first()
+
+            if event_row is None:
+                raise ValueError(
+                    f"Event {event_id} does not exist."
+                )
+
+            result = conn.execute(
+                update(pre_draw_prizes)
+                .where(
+                    pre_draw_prizes.c.event_id == event_id,
+                    pre_draw_prizes.c.status == "generated",
+                )
+                .values(
+                    status="ready",
+                    updated_at=now,
+                )
+            )
+
+            return int(result.rowcount or 0)
+
     def delete(
         self,
         event_id: int,

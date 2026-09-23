@@ -9,7 +9,7 @@ from ..utils.constants import GOLD, BLACK, DARK_GRAY, LIGHT_GRAY
 
 
 def _participant_card(guest):
-    """Render one attending participant with preliminary-winner status."""
+    """Render one persisted Pre-Draw winner."""
 
     guest_id = guest.get("guest_id", "")
     name = guest.get("name", "Guest")
@@ -130,7 +130,7 @@ def _participant_card(guest):
 
 
 def _legend():
-    """Explain preliminary-winner status to the audience."""
+    """Explain the Pre-Draw winner display to the audience."""
     return rx.hstack(
         rx.hstack(
             rx.box(
@@ -170,7 +170,7 @@ def _legend():
 
 
 def pre_draw_display_page():
-    """Fullscreen presentation of all attending participants."""
+    """Fullscreen presentation of persisted Pre-Draw winners."""
 
     return rx.box(
         rx.vstack(
@@ -228,7 +228,7 @@ def pre_draw_display_page():
             rx.box(
                 rx.text(
                     "Please look for your name below. "
-                    "Guests highlighted in gold have already won a preliminary prize.",
+                    "These guests have already been selected as Pre-Draw winners.",
                     color=LIGHT_GRAY,
                     font_size=["0.78em", "0.9em", "1em"],
                     text_align="center",
@@ -244,7 +244,7 @@ def pre_draw_display_page():
                 rx.hstack(
                     rx.vstack(
                         rx.text(
-                            "ATTENDING PARTICIPANTS",
+                            "PRE-DRAW WINNERS",
                             color=GOLD,
                             font_size="0.72em",
                             font_weight="900",
