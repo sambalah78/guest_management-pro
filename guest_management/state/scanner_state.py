@@ -105,7 +105,8 @@ class ScannerState(rx.State):
             scanner, token = ScannerStationAuthService().provision_station(
                 event_id=int(self.current_event_id),
                 device_name=scanner_name,
-                assigned_by=auth.user_id,
+                actor_user_id=auth.user_id,
+                actor_user=auth.user,
             )
 
             self.new_scanner_token = token
@@ -530,30 +531,41 @@ class ScannerState(rx.State):
         return str(guest.get("team_name") or guest.get("Team") or guest.get("team") or "")
 
     async def initialize_scanners(self):
-        if not self.current_event_id:
-            return
-
+        """Load scanner stations for the current event."""
         try:
+            if not self.current_event_id:
+                self.scanner_devices = []
+                return
+
+            auth = await self.get_state(AuthState)
+
+            if not auth.user_id:
+                raise PermissionError("Authentication required")
+
+            if not auth.is_event_admin:
+                raise PermissionError("Event administrator access required")
+
             self.scanner_devices = ScannerService().get_scanners(
-                int(self.current_event_id)
+                event_id=int(self.current_event_id),
+                user_id=auth.user_id,
+                user=auth.user,
             )
 
             self.active_scanners = {
-                str(d["device_id"]): bool(d.get("is_active", False))
-                for d in self.scanner_devices
+                str(device["device_id"]): bool(device.get("is_active", False))
+                for device in self.scanner_devices
             }
 
             self.scanner_scan_status = {
-                str(d["device_id"]): (
+                str(device["device_id"]): (
                     "ready"
-                    if d.get("is_active", False)
+                    if device.get("is_active", False)
                     else "inactive"
                 )
-                for d in self.scanner_devices
+                for device in self.scanner_devices
             }
 
         except Exception:
-            logger.exception("Failed to load scanner stations")
             self.scanner_devices = []
             self.active_scanners = {}
             self.scanner_scan_status = {}
@@ -579,8 +591,10 @@ class ScannerState(rx.State):
 
         try:
             scanner = ScannerService().activate_scanner(
-                int(self.current_event_id),
-                device_id,
+                event_id=int(self.current_event_id),
+                device_id=device_id,
+                user_id=auth.user_id,
+                user=auth.user,
             )
 
             if not scanner:
@@ -610,8 +624,10 @@ class ScannerState(rx.State):
 
         try:
             scanner = ScannerService().deactivate_scanner(
-                int(self.current_event_id),
-                device_id,
+                event_id=int(self.current_event_id),
+                device_id=device_id,
+                user_id=auth.user_id,
+                user=auth.user,
             )
 
             if not scanner:

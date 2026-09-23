@@ -33,6 +33,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from guest_management.core.exceptions import (
+    AuthorizationError,
     GuestAlreadyCheckedInError,
     GuestNotFoundError,
     ValidationError,
@@ -50,6 +51,8 @@ from guest_management.repositories.checkin_repository import CheckinRepository
 from guest_management.repositories.scanner_repository import ScannerRepository
 from guest_management.services.checkin_service import CheckinService
 from guest_management.services.qr_service import QRService
+from guest_management.repositories import EventRepository
+from guest_management.services.event_service import EventService
 from guest_management.services.scanner_station_auth_service import (
     ScannerStationAuthService,
 )
@@ -221,8 +224,16 @@ def build_checkin_service(test_engine: Engine) -> CheckinService:
 
 def build_scanner_auth_service(test_engine: Engine) -> ScannerStationAuthService:
     """Build scanner authentication against the disposable test database."""
-    scanner_repo = ScannerRepository(db=Database(db_engine=test_engine))
-    return ScannerStationAuthService(repo=scanner_repo)
+    test_db = Database(db_engine=test_engine)
+
+    scanner_repo = ScannerRepository(db=test_db)
+    event_repo = EventRepository(db=test_db)
+    event_service = EventService(repository=event_repo)
+
+    return ScannerStationAuthService(
+        repo=scanner_repo,
+        event_service=event_service,
+    )
 
 
 def direct_signed_qr(guest_id: str, event_id: int = EVENT_ID) -> str:
@@ -242,7 +253,12 @@ def provision_scanner(
     scanner, token = auth_service.provision_station(
         event_id=EVENT_ID,
         device_name=name,
-        assigned_by=TEST_USER_ID,
+        actor_user_id=TEST_USER_ID,
+        actor_user={
+            "id": TEST_USER_ID,
+            "role": "ADMIN",
+            "is_active": True,
+        },
     )
 
     assert scanner["event_id"] == EVENT_ID
@@ -292,8 +308,8 @@ def test_invalid_scanner_credential_is_rejected_before_checkin(seeded_database):
     )
 
     with pytest.raises(
-        ValidationError,
-        match="Invalid, inactive, or incorrectly assigned scanner station",
+        AuthorizationError,
+        match="Invalid scanner access token",
     ):
         build_checkin_service(seeded_database.engine).check_in(
             EVENT_ID,
@@ -336,8 +352,8 @@ def test_inactive_scanner_is_rejected(seeded_database):
     )
 
     with pytest.raises(
-        ValidationError,
-        match="Invalid, inactive, or incorrectly assigned scanner station",
+        AuthorizationError,
+        match="Scanner station is inactive",
     ):
         build_checkin_service(seeded_database.engine).check_in(
             EVENT_ID,
