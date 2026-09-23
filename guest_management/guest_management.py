@@ -152,7 +152,10 @@ app.add_page(
     lucky_draw_display.lucky_draw_display_page,
     route="/lucky-draw-display",
     title="Lucky Draw Display",
-    on_load=LuckyDrawState.load_lucky_draw_display_data,
+    on_load=[
+        AuthState.check_auth,
+        LuckyDrawState.load_lucky_draw_display_data,
+    ],
 )
 app.add_page(
     lucky_draw_external_display.lucky_draw_external_display_page,

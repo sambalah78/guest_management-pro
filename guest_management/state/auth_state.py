@@ -334,7 +334,6 @@ class AuthState(rx.State):
             "/success",
             "/already-checked",
             "/already_checked",
-            "/lucky-draw-display",
         )
 
         return (

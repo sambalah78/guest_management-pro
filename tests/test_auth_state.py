@@ -522,7 +522,6 @@ def test_public_route_detection():
         "/success/18",
         "/already-checked/18",
         "/already_checked/18",
-        "/lucky-draw-display/18",
     )
 
     for path in public_routes:
@@ -537,6 +536,8 @@ def test_protected_route_is_not_public():
         "/dashboard",
         "/admin",
         "/settings",
+        "/lucky-draw-display",
+        "/lucky-draw-display/18",
     ):
         assert state._is_public_route(path) is False
 
