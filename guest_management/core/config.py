@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import base64
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -47,6 +49,7 @@ class Settings:
 
     # Session configuration
     session_secret: str
+    session_encryption_key: str
     session_ttl_seconds: int
 
     # Scanner configuration
@@ -72,6 +75,7 @@ class Settings:
             "DATABASE_URL": self.database_url,
             "QR_SECRET": self.qr_secret,
             "SESSION_SECRET": self.session_secret,
+            "SESSION_ENCRYPTION_KEY": self.session_encryption_key,
             "SCANNER_STATION_SECRET": self.scanner_station_secret,
         }
 
@@ -118,14 +122,87 @@ class Settings:
                 "SESSION_SECRET must contain at least 32 characters"
             )
 
-        if len(self.scanner_station_secret) < 32:
+        if not self.session_encryption_key:
+            raise ConfigurationError(
+                "SESSION_ENCRYPTION_KEY must be configured"
+            )
+
+        if self.is_production:
+            development_defaults = {
+                "QR_SECRET": "dev-qr-secret-change-me-please-32-characters",
+                "SESSION_SECRET": "dev-session-secret-change-me-please-32-characters",
+                "SESSION_ENCRYPTION_KEY": (
+                    "dev-session-encryption-key-change-me-please-32-characters"
+                ),
+            }
+
+            configured_secrets = {
+                "QR_SECRET": self.qr_secret,
+                "SESSION_SECRET": self.session_secret,
+                "SESSION_ENCRYPTION_KEY": self.session_encryption_key,
+            }
+
+            reused_defaults = [
+                name
+                for name, value in configured_secrets.items()
+                if value == development_defaults[name]
+            ]
+
+            if reused_defaults:
+                raise ConfigurationError(
+                    "Production configuration must not use development "
+                    "default secrets: "
+                    + ", ".join(reused_defaults)
+                )
+
+        try:
+            decoded_session_key = base64.urlsafe_b64decode(
+                self.session_encryption_key.encode("ascii")
+            )
+        except (ValueError, UnicodeEncodeError):
+            raise ConfigurationError(
+                "SESSION_ENCRYPTION_KEY must be valid URL-safe base64"
+            )
+
+        if len(decoded_session_key) != 32:
+            raise ConfigurationError(
+                "SESSION_ENCRYPTION_KEY must decode to exactly 32 bytes"
+            )
+
+        if self.scanner_station_secret and len(self.scanner_station_secret) < 32:
             raise ConfigurationError(
                 "SCANNER_STATION_SECRET must contain at least 32 characters"
             )
-        if self.is_production and self.allow_legacy_qr:
-            raise ConfigurationError(
-                "ALLOW_LEGACY_QR must be false in production"
-            )
+        if self.is_production:
+            app_url = urlparse(self.app_url)
+            if app_url.scheme != "https" or app_url.hostname in {
+                "localhost",
+                "127.0.0.1",
+                "::1",
+            }:
+                raise ConfigurationError(
+                    "APP_URL must use HTTPS and must not point to localhost "
+                    "in production"
+                )
+
+            redirect_uri = urlparse(self.google_redirect_uri)
+            if (
+                redirect_uri.scheme != "https"
+                or redirect_uri.hostname in {
+                    "localhost",
+                    "127.0.0.1",
+                    "::1",
+                }
+            ):
+                raise ConfigurationError(
+                    "GOOGLE_REDIRECT_URI must use HTTPS and must not point "
+                    "to localhost in production"
+                )
+
+            if self.allow_legacy_qr:
+                raise ConfigurationError(
+                    "ALLOW_LEGACY_QR must be false in production"
+                )
 
 def load_settings() -> Settings:
     def integer(name: str, default: int) -> int:
@@ -236,6 +313,11 @@ def load_settings() -> Settings:
         session_secret=_env(
             "SESSION_SECRET",
             "dev-session-secret-change-me-please-32-characters",
+        ),
+
+        session_encryption_key=_env(
+            "SESSION_ENCRYPTION_KEY",
+            "dev-session-encryption-key-change-me-please-32-characters",
         ),
 
         session_ttl_seconds=max(

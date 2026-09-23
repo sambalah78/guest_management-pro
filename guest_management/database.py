@@ -101,6 +101,20 @@ users = _table(
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
 )
 
+
+auth_sessions = _table(
+    "auth_sessions",
+    Column("id", _pg_bigint(), Identity(start=1, increment=1), primary_key=True),
+    Column("session_id_hash", Text, nullable=False, unique=True),
+    Column("user_id", _pg_uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("access_token_ciphertext", Text, nullable=False),
+    Column("refresh_token_ciphertext", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("last_used_at", DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+    Column("revoked_at", DateTime(timezone=True)),
+)
+
 events = _table(
     "events",
     Column("id", _pg_bigint(), Identity(start=1, increment=1), primary_key=True),
@@ -357,6 +371,13 @@ event_assets = _table(
 # for the intended newest-first queries.
 Index("idx_users_active", users.c.is_active)
 Index("idx_users_role", users.c.role)
+Index("idx_auth_sessions_user", auth_sessions.c.user_id)
+Index("idx_auth_sessions_expires", auth_sessions.c.expires_at)
+Index(
+    "idx_auth_sessions_active",
+    auth_sessions.c.expires_at,
+    postgresql_where=auth_sessions.c.revoked_at.is_(None),
+)
 Index("idx_events_date", events.c.date)
 Index("idx_events_user_created", events.c.user_id, events.c.created_at.desc())
 Index("idx_guests_event_status", guests.c.event_id, guests.c.status)
@@ -810,8 +831,21 @@ def _db_process_voucher_purchase(self: Database, p):
             [{"result": "not_checked_in", "message": "Guest must be checked in first"}])
         ids = [int(i.get("id")) for i in items if i.get("id") is not None]
         if not ids: return Result([{"result": "invalid", "message": "Invalid items"}])
+        stall = conn.execute(
+            select(stalls).where(
+                stalls.c.id == stall_id,
+                stalls.c.event_id == event_id,
+            )
+        ).mappings().first()
+        if not stall:
+            return Result([{"result": "invalid", "message": "Invalid stall"}])
+
         menu_rows = conn.execute(
-            select(menu_items).where(menu_items.c.stall_id == stall_id, menu_items.c.id.in_(ids))).mappings().all()
+            select(menu_items).where(
+                menu_items.c.stall_id == stall_id,
+                menu_items.c.id.in_(ids),
+            )
+        ).mappings().all()
         by_id = {r["id"]: r for r in menu_rows}
         if len(by_id) != len(set(ids)): return Result(
             [{"result": "invalid", "message": "One or more menu items are invalid"}])
@@ -841,5 +875,4 @@ Database.process_voucher_purchase = _db_process_voucher_purchase
 
 
 def get_db() -> Database:
-    init_db()
     return Database()

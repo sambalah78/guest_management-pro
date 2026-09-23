@@ -1,50 +1,28 @@
-"""EventLah authentication state using Supabase Auth."""
+"""EventLah browser authentication state."""
 
 from __future__ import annotations
 
-
+import json
+import os
 
 import reflex as rx
 
-from guest_management.core.config import settings
-from guest_management.services.auth_service import AuthService
+from guest_management.services.auth_session_resolver import (
+    AuthSessionResolutionError,
+    AuthSessionResolver,
+)
 
 
 class AuthState(rx.State):
-    """Browser/application authentication state.
+    """EventLah browser/application authentication state.
 
-    Supabase Auth is responsible for authentication.
+    Authentication credentials are kept server-side.
 
-    The existing ``eventlah_session`` cookie is temporarily retained
-    as the access-token cookie during the migration so that the rest of
-    the application does not need to change authentication contracts
-    all at once.
+    The browser receives only the opaque ``eventlah_session`` HttpOnly
+    session cookie from the authentication API. Supabase access and
+    refresh tokens are never stored in Reflex state or browser-readable
+    cookies.
     """
-
-    # ------------------------------------------------------------------
-    # Authentication token
-    # ------------------------------------------------------------------
-
-    # IMPORTANT:
-    # This cookie now contains the Supabase access token.
-    #
-    # We retain the existing cookie name temporarily so downstream
-    # The existing cookie name is retained temporarily for compatibility.
-    access_token: str = rx.Cookie(
-        name="eventlah_session",
-        max_age=settings.session_ttl_seconds,
-        path="/",
-        same_site="lax",
-        secure=settings.is_production,
-    )
-
-    refresh_token: str = rx.Cookie(
-        name="eventlah_refresh",
-        max_age=settings.session_ttl_seconds,
-        path="/",
-        same_site="lax",
-        secure=settings.is_production,
-    )
 
     # ------------------------------------------------------------------
     # Login form
@@ -62,8 +40,6 @@ class AuthState(rx.State):
 
     auth_checked: bool = False
     is_loading: bool = False
-
-
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -89,15 +65,12 @@ class AuthState(rx.State):
         self.auth_error = ""
 
     def _clear_auth_state(self) -> None:
-        """Clear all local authentication state."""
-        self.access_token = ""
-        self.refresh_token = ""
+        """Clear all local authentication/profile state."""
         self.is_authenticated = False
         self.user_id = ""
         self.user_email = ""
         self.user = {}
         self.auth_error = ""
-
 
     # ------------------------------------------------------------------
     # Computed state
@@ -135,144 +108,197 @@ class AuthState(rx.State):
         )
 
     # ------------------------------------------------------------------
-    # Supabase login
+    # Login
     # ------------------------------------------------------------------
 
-    async def login(self):
-        """Sign in using Supabase Auth email/password."""
+    def login(self):
+        """Authenticate through the server-side authentication API.
+
+        The browser calls ``/api/auth/session`` directly so that FastAPI
+        can issue the HttpOnly session cookie. Supabase access/refresh
+        tokens never enter Reflex state.
+        """
         self.is_loading = True
         self.auth_error = ""
 
-        try:
-            email = self.username.strip().lower()
+        email = self.username.strip().lower()
 
-            if not email:
-                self.auth_error = "Please enter your email address."
-                yield rx.toast.error(
-                    title=self.auth_error
-                )
-                return
-
-            if not self.password:
-                self.auth_error = "Please enter your password."
-                yield rx.toast.error(
-                    title=self.auth_error
-                )
-                return
-
-            result = AuthService().login(
-                email=email,
-                password=self.password,
-            )
-
-            user = result.get("user")
-
-            if not user:
-                self.auth_error = (
-                    "Authentication succeeded, but "
-                    "your EventLah profile could not be found."
-                )
-                yield rx.toast.error(
-                    title=self.auth_error
-                )
-                return
-
-            access_token = str(
-                result.get("access_token") or ""
-            )
-
-            if not access_token:
-                self.auth_error = (
-                    "Authentication succeeded, but "
-                    "no access token was returned."
-                )
-                yield rx.toast.error(
-                    title=self.auth_error
-                )
-                return
-
-            refresh_token = str(
-                result.get("refresh_token") or ""
-            )
-
-            if not refresh_token:
-                self.auth_error = (
-                    "Authentication succeeded, but "
-                    "no refresh token was returned."
-                )
-                yield rx.toast.error(
-                    title=self.auth_error
-                )
-                return
-
-            self.access_token = access_token
-            self.refresh_token = refresh_token
-
-            self._apply_user(user)
-            self.auth_checked = True
-
-            # Do not retain the password in application state after
-            # successful authentication.
-            self.password = ""
-
-            yield rx.redirect("/events")
-
-        except PermissionError as exc:
-            self.auth_error = str(exc)
-            self._clear_auth_state()
-
-            yield rx.toast.error(
-                title=self.auth_error
-            )
-
-        except ValueError as exc:
-            self.auth_error = str(exc)
-
-            yield rx.toast.error(
-                title=self.auth_error
-            )
-        except Exception:
-            self.auth_error = (
-                "Unable to sign in. "
-                "Please check your email and password."
-            )
-
-            self._clear_auth_state()
-
-            yield rx.toast.error(
-                title=self.auth_error
-            )
-
-        finally:
+        if not email:
+            self.auth_error = "Please enter your email address."
             self.is_loading = False
+            return rx.toast.error(
+                title=self.auth_error
+            )
 
+        if not self.password:
+            self.auth_error = "Please enter your password."
+            self.is_loading = False
+            return rx.toast.error(
+                title=self.auth_error
+            )
 
+        payload = json.dumps(
+            {
+                "email": email,
+                "password": self.password,
+            }
+        )
+
+        api_base_url = os.getenv(
+            "API_URL",
+            "http://localhost:8000",
+        ).rstrip("/")
+
+        script = f"""
+(async () => {{
+    try {{
+        const apiBase = {json.dumps(api_base_url)};
+
+        const response = await fetch(
+            apiBase + "/api/auth/session",
+            {{
+                method: "POST",
+                headers: {{
+                    "Content-Type": "application/json"
+                }},
+                credentials: "include",
+                body: {json.dumps(payload)}
+            }}
+        );
+
+        let data = {{}};
+
+        try {{
+            data = await response.json();
+        }} catch (_) {{
+            data = {{}};
+        }}
+
+        return {{
+            ok: response.ok,
+            status: response.status,
+            data: data
+        }};
+    }} catch (error) {{
+        return {{
+            ok: false,
+            status: 0,
+            data: {{
+                detail: "Unable to connect to the authentication service."
+            }}
+        }};
+    }}
+}})()
+"""
+
+        return rx.call_script(
+            script,
+            callback=AuthState.handle_login_result,
+        )
+
+    def handle_login_result(self, result):
+        """Handle the authentication API response."""
+        # Never retain the submitted password after the authentication
+        # request has completed, regardless of success or failure.
+        self.password = ""
+        self.is_loading = False
+
+        if not isinstance(result, dict):
+            self._clear_auth_state()
+            self.auth_error = (
+                "Unable to sign in. Please try again."
+            )
+            return rx.toast.error(
+                title=self.auth_error
+            )
+
+        if not bool(result.get("ok")):
+            data = result.get("data") or {}
+
+            detail = str(
+                data.get("detail")
+                or "Unable to sign in. Please check your email and password."
+            )
+
+            self._clear_auth_state()
+            self.auth_error = detail
+
+            return rx.toast.error(
+                title=self.auth_error
+            )
+
+        data = result.get("data") or {}
+        user = data.get("user")
+
+        if not isinstance(user, dict) or not user.get("id"):
+            self._clear_auth_state()
+            self.auth_error = (
+                "Authentication succeeded, but "
+                "your EventLah profile could not be found."
+            )
+
+            return rx.toast.error(
+                title=self.auth_error
+            )
+
+        self._apply_user(user)
+        self.auth_checked = True
+
+        # Never retain the password after authentication.
+        self.password = ""
+
+        return rx.redirect("/events")
 
     # ------------------------------------------------------------------
     # Logout
     # ------------------------------------------------------------------
 
     def logout(self):
-        """Sign out from Supabase and clear the local session."""
+        """Revoke the server-side session and clear the browser cookie."""
+        api_base_url = os.getenv(
+            "API_URL",
+            "http://localhost:8000",
+        ).rstrip("/")
 
-        try:
-            AuthService().logout(
-                access_token=self.access_token,
-                refresh_token=self.refresh_token,
-            )
-        except Exception:
-            # Even if the remote Supabase logout fails,
-            # the local browser session must still be destroyed.
-            pass
+        script = f"""
+(async () => {{
+    try {{
+        const apiBase = {json.dumps(api_base_url)};
 
+        const response = await fetch(
+            apiBase + "/api/auth/session/logout",
+            {{
+                method: "POST",
+                credentials: "include"
+            }}
+        );
+
+        return {{
+            ok: response.ok,
+            status: response.status
+        }};
+    }} catch (_) {{
+        return {{
+            ok: false,
+            status: 0
+        }};
+    }}
+}})()
+"""
+
+        return rx.call_script(
+            script,
+            callback=AuthState.handle_logout_result,
+        )
+
+    def handle_logout_result(self, result):
+        """Clear local state after the logout API has been called."""
         self._clear_auth_state()
+        self.password = ""
         self.auth_checked = True
+        self.is_loading = False
 
-        return [
-            rx.remove_cookie("eventlah_session"),
-            rx.remove_cookie("eventlah_refresh"),
-            rx.redirect("/"),
-        ]
+        return rx.redirect("/")
 
     # ------------------------------------------------------------------
     # Route protection
@@ -313,55 +339,22 @@ class AuthState(rx.State):
             path in exact
             or path.startswith(prefixes)
         )
+
     def _get_valid_user(self) -> dict | None:
-        """Return the current user, refreshing the session if necessary."""
-
-        user = AuthService().get_current_user(
-            self.access_token
-        )
-
-        if user:
-            return user
-
-        if not self.refresh_token:
+        """Resolve the current user from the server-side session."""
+        try:
+            return AuthSessionResolver().get_current_user()
+        except AuthSessionResolutionError:
             return None
-
-        refreshed = AuthService().refresh_session(
-            self.refresh_token
-        )
-
-        if not refreshed:
+        except Exception:
             return None
-
-        new_access_token = str(
-            refreshed.get("access_token") or ""
-        )
-
-        new_refresh_token = str(
-            refreshed.get("refresh_token") or ""
-        )
-
-        refreshed_user = refreshed.get("user")
-
-        if (
-            not new_access_token
-            or not new_refresh_token
-            or not refreshed_user
-        ):
-            return None
-
-        self.access_token = new_access_token
-        self.refresh_token = new_refresh_token
-
-        return refreshed_user
 
     # ------------------------------------------------------------------
     # Authentication checks
     # ------------------------------------------------------------------
 
     async def check_auth(self):
-        """Validate the current Supabase access token."""
-
+        """Validate the current server-side authentication session."""
 
         path = (
             getattr(
@@ -390,14 +383,12 @@ class AuthState(rx.State):
         self.auth_checked = True
 
     async def check_session_on_load(self):
-        """Validate the authentication token when the app loads."""
-
+        """Restore the authenticated user from the server-side session."""
 
         user = self._get_valid_user()
 
         if user:
             self._apply_user(user)
-
         else:
             self._clear_auth_state()
 
@@ -406,7 +397,8 @@ class AuthState(rx.State):
     async def ensure_valid_session(
         self,
     ) -> bool:
-        """Validate the current Supabase access token."""
+        """Return whether the current server-side session is valid."""
+
         user = self._get_valid_user()
 
         if user:
@@ -437,5 +429,9 @@ class AuthState(rx.State):
         self,
         token: str,
     ):
-        """Compatibility setter for existing callers."""
-        self.access_token = token or ""
+        """Deprecated compatibility setter.
+
+        Admin authentication no longer stores Supabase access tokens.
+        The method is retained temporarily so older callers do not fail.
+        """
+        return None
