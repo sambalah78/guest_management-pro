@@ -135,10 +135,6 @@ class GuestState(rx.State):
     # ========================================================================
     # LUCKY DRAW
     # ========================================================================
-    lucky_draw_only_present: bool = True
-    lucky_draw_excluded: str = ""
-    lucky_draw_eligible_guests: List[Dict[str, Any]] = []
-    winners_list: List[Dict[str, Any]] = []
 
     # ========================================================================
     # LOADING
@@ -236,10 +232,6 @@ class GuestState(rx.State):
         result = self.filtered_data[start:end]
         logger.info(f"paginated_guests: {len(result)} guests from {len(self.filtered_data)} total")
         return result
-
-    @rx.var
-    def lucky_draw_eligible_count(self) -> int:
-        return len(self.lucky_draw_eligible_guests)
 
     # ========================================================================
     # LOAD GUESTS
@@ -1397,74 +1389,6 @@ class GuestState(rx.State):
     # ========================================================================
     # LUCKY DRAW METHODS
     # ========================================================================
-
-    def load_lucky_draw_eligible_guests(self):
-        if not self.guest_data:
-            self.lucky_draw_eligible_guests = []
-            return
-
-        eligible = []
-        excluded = [x.strip().lower() for x in self.lucky_draw_excluded.split(",")] if self.lucky_draw_excluded else []
-        previous_winners = [str(w.get("guest_id", "")).lower() for w in self.winners_list]
-
-        for guest in self.guest_data:
-            name = guest.get("Name", guest.get("name", ""))
-            guest_id = guest.get("ID", guest.get("guest_id", ""))
-            status = guest.get("status", guest.get("Status", ""))
-            table_number = guest.get("Table", guest.get("table_number", "TBD"))
-
-            if not name or not guest_id:
-                continue
-
-            if self.lucky_draw_only_present:
-                if str(status).strip().lower() != "present":
-                    continue
-
-            if guest_id.lower() in previous_winners:
-                continue
-
-            if name.lower() in excluded or guest_id.lower() in excluded:
-                continue
-
-            eligible.append({
-                "name": name,
-                "guest_id": guest_id,
-                "table_number": table_number,
-                "email": guest.get("Email", guest.get("email", ""))
-            })
-
-        self.lucky_draw_eligible_guests = eligible
-
-    async def load_winners(self):
-        try:
-            db = get_db()
-            if not self.current_event_id:
-                return
-
-            res = db.table("winners") \
-                .select("*") \
-                .eq("event_id", int(self.current_event_id)) \
-                .order("created_at", desc=True) \
-                .execute()
-
-            winners = res.data if res.data else []
-
-            for w in winners:
-                if w.get("created_at"):
-                    w["formatted_date"] = w["created_at"].split("T")[0]
-
-            self.winners_list = winners
-
-        except Exception as e:
-            logger.error(f"Error loading winners: {e}")
-
-    def set_lucky_draw_only_present(self, value: bool):
-        self.lucky_draw_only_present = value
-        self.load_lucky_draw_eligible_guests()
-
-    def set_lucky_draw_excluded(self, value: str):
-        self.lucky_draw_excluded = value
-        self.load_lucky_draw_eligible_guests()
 
     # ========================================================================
     # CONTACT METHODS
