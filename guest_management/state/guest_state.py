@@ -383,22 +383,70 @@ class GuestState(rx.State):
             return ["Name", "Email", "ID", "Table", "Amount", "Status", "Email Sent"]
         return ["Name", "Email", "ID", "Table", "Status", "Email Sent"]
 
+    async def _authorize_current_event(self) -> int:
+        """Authorize the authenticated user for the current event."""
+        from guest_management.state.auth_state import AuthState
+
+        event_id = int(self.current_event_id or 0)
+        if not event_id:
+            raise AuthorizationError("Event ID is required.")
+
+        auth = await self.get_state(AuthState)
+        user_id = str(auth.user_id or "").strip()
+
+        if not user_id:
+            raise AuthorizationError("Authentication required.")
+
+        EventService().get_event(
+            event_id,
+            user_id,
+            auth.user,
+        )
+
+        return event_id
+
     async def update_dashboard_stats(self):
         """Refresh dashboard counts from the database, never from page length."""
         try:
+            event_id = await self._authorize_current_event()
+
             from guest_management.repositories import GuestRepository
-            if not self.current_event_id:
-                self.total_guests = self.present_count = self.absent_count = 0
-                self.present_percentage = self.absent_percentage = 0
-                yield
-                return
-            response = GuestRepository().db.rpc("get_event_stats", {"p_event_id": int(self.current_event_id)}).execute()
+
+            response = GuestRepository().db.rpc(
+                "get_event_stats",
+                {"p_event_id": event_id},
+            ).execute()
+
             row = (response.data or [{}])[0]
             self.total_guests = int(row.get("total_guests", 0))
             self.present_count = int(row.get("present_count", 0))
-            self.absent_count = int(row.get("absent_count", max(0, self.total_guests - self.present_count)))
-            self.present_percentage = round(self.present_count / self.total_guests * 100) if self.total_guests else 0
-            self.absent_percentage = round(self.absent_count / self.total_guests * 100) if self.total_guests else 0
+            self.absent_count = int(
+                row.get(
+                    "absent_count",
+                    max(
+                        0,
+                        self.total_guests - self.present_count,
+                    ),
+                )
+            )
+            self.present_percentage = (
+                round(
+                    self.present_count
+                    / self.total_guests
+                    * 100
+                )
+                if self.total_guests
+                else 0
+            )
+            self.absent_percentage = (
+                round(
+                    self.absent_count
+                    / self.total_guests
+                    * 100
+                )
+                if self.total_guests
+                else 0
+            )
         except Exception:
             logger.exception("Unable to update dashboard stats")
         yield
@@ -996,6 +1044,8 @@ class GuestState(rx.State):
                     rows,
                     event_id,
                     event_type,
+                    user_id=auth.user_id,
+                    user=auth.user,
                 )
             )
             # ==============================================================

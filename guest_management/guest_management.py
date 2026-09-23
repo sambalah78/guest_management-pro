@@ -67,7 +67,7 @@ app.add_page(
     route="/checkin/[event_id]",
     on_load=[
         AuthState.check_auth,
-        GuestState.set_current_event_from_url,
+        EventState.load_event_from_url,
     ],
     title="Manual Check-In",
 )

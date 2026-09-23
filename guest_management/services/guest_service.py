@@ -6,26 +6,87 @@ import json
 import math
 from typing import Any, Dict, List, Tuple
 
-from guest_management.core.exceptions import GuestAlreadyCheckedInError, GuestNotFoundError, ValidationError
+from guest_management.core.exceptions import (
+    AuthorizationError,
+    GuestAlreadyCheckedInError,
+    GuestNotFoundError,
+    ValidationError,
+)
 from guest_management.repositories import EventRepository, GuestRepository, CheckinRepository
+from guest_management.services.event_service import EventService
 from guest_management.services.qr_service import QRService
 
 
 class GuestService:
 
-    def __init__(self, repo: GuestRepository | None = None, event_repo: EventRepository | None = None, checkin_repo: CheckinRepository | None = None,):
+    def __init__(
+        self,
+        repo: GuestRepository | None = None,
+        event_repo: EventRepository | None = None,
+        checkin_repo: CheckinRepository | None = None,
+        event_service: EventService | None = None,
+    ):
         self.repo = repo or GuestRepository()
         self.event_repo = event_repo or EventRepository()
         self.checkin_repo = checkin_repo or CheckinRepository()
+        self.event_service = event_service or EventService()
         self.qr_service = QRService()
 
+    def _authorize_event_access(
+        self,
+        event_id: int,
+        user_id: str | None,
+        user: Dict[str, Any] | None,
+    ) -> None:
+        """Authorize access to an event before touching guest data."""
+        if not user_id:
+            raise AuthorizationError("Authenticated user required")
 
-    def get_guests_by_event(self, event_id: int, page: int = 1, page_size: int = 50) -> Tuple[List[Dict[str, Any]], int]:
+        self.event_service.get_event(
+            int(event_id),
+            user_id,
+            user,
+        )
+
+
+    def get_guests_by_event(
+        self,
+        event_id: int,
+        page: int = 1,
+        page_size: int = 50,
+        *,
+        user_id: str | None = None,
+        user: Dict[str, Any] | None = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        self._authorize_event_access(
+            event_id,
+            user_id,
+            user,
+        )
+
         page = max(1, int(page))
         page_size = min(max(1, int(page_size)), 200)
-        return self.repo.get_by_event(int(event_id), page_size, (page - 1) * page_size)
 
-    def get_guest(self, guest_id: str, event_id: int) -> Dict[str, Any]:
+        return self.repo.get_by_event(
+            int(event_id),
+            page_size,
+            (page - 1) * page_size,
+        )
+
+    def get_guest(
+        self,
+        guest_id: str,
+        event_id: int,
+        *,
+        user_id: str | None = None,
+        user: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        self._authorize_event_access(
+            event_id,
+            user_id,
+            user,
+        )
+
         guest = self.repo.get_by_guest_id(guest_id, event_id)
         if not guest:
             raise GuestNotFoundError(f"Guest {guest_id} not found")
@@ -41,8 +102,23 @@ class GuestService:
         except GuestAlreadyCheckedInError:
             raise
 
-    def get_guest_stats(self, event_id: int) -> Dict[str, Any]:
-        response = self.repo.db.rpc("get_event_stats", {"p_event_id": int(event_id)}).execute()
+    def get_guest_stats(
+        self,
+        event_id: int,
+        *,
+        user_id: str | None = None,
+        user: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        self._authorize_event_access(
+            event_id,
+            user_id,
+            user,
+        )
+
+        response = self.repo.db.rpc(
+            "get_event_stats",
+            {"p_event_id": int(event_id)},
+        ).execute()
         row = (response.data or [{}])[0]
         total = int(row.get("total_guests", 0))
         present = int(row.get("present_count", 0))
@@ -55,7 +131,21 @@ class GuestService:
             "absent_percentage": round(absent / total * 100) if total else 0,
         }
 
-    def process_guests_from_data(self, guests_data: List[Dict[str, Any]], event_id: int, event_type: str) -> Tuple[int, int]:
+    def process_guests_from_data(
+        self,
+        guests_data: List[Dict[str, Any]],
+        event_id: int,
+        event_type: str,
+        *,
+        user_id: str | None = None,
+        user: Dict[str, Any] | None = None,
+    ) -> Tuple[int, int]:
+        self._authorize_event_access(
+            event_id,
+            user_id,
+            user,
+        )
+
         if not guests_data:
             return 0, 0
 

@@ -361,7 +361,10 @@ class EventState(rx.State):
         try:
             path = getattr(self.router.url, "path", "") or ""
 
-            match = re.search(r"/dashboard/(\d+)", path)
+            match = re.search(
+                r"/(?:dashboard|checkin)/(\d+)",
+                path,
+            )
             if not match:
                 self.current_event = None
                 self.current_event_id = ""
@@ -398,9 +401,10 @@ class EventState(rx.State):
             )
 
             logger.info(
-                "Dashboard event loaded: id=%s name=%s",
+                "Authorized event loaded from URL: id=%s name=%s path=%s",
                 event_id,
                 event.get("name", ""),
+                path,
             )
 
             yield
