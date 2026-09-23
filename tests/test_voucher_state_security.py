@@ -333,3 +333,157 @@ def test_no_direct_authstate_construction_remains():
     assert "AuthState()" not in text
     assert text.count("await self.get_state(AuthState)") == 2
     assert text.count("await self._authorize_voucher_admin()") == 8
+
+
+@pytest.mark.asyncio
+async def test_continue_to_menu_never_puts_guest_id_in_url(monkeypatch):
+    state = VoucherState()
+    state.url_stall_id = "10"
+    state.url_event_id = "1"
+    state.current_stall = {"id": 10, "event_id": 1, "stall_name": "Stall"}
+    state.guest_authenticated = True
+    state.authenticated_guest = {
+        "event_id": 1,
+        "guest_id": "G001",
+        "name": "Guest One",
+        "amount": 100,
+        "status": "Present",
+    }
+
+    redirect = MagicMock(return_value="REDIRECT")
+    monkeypatch.setattr("guest_management.state.voucher_state.rx.redirect", redirect)
+
+    events = []
+    async for event in state.continue_to_menu():
+        events.append(event)
+
+    redirect.assert_called_once_with("/stall/menu?stall_id=10&event_id=1")
+    assert events == ["REDIRECT"]
+
+
+@pytest.mark.asyncio
+
+
+@pytest.mark.asyncio
+async def test_start_order_rejects_invalid_voucher_access_code(monkeypatch):
+    state = VoucherState()
+    state.url_stall_id = "10"
+    state.url_event_id = "18"
+    state.guest_id_input = "G001"
+    state.voucher_access_code_input = "WRONG-CODE"
+    state.current_stall = {"id": 10, "event_id": 18}
+
+    guest = {
+        "event_id": 18,
+        "guest_id": "G001",
+        "name": "Guest One",
+        "amount": 100,
+        "email": "guest@example.com",
+        "status": "Present",
+    }
+
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = [guest]
+    monkeypatch.setattr(
+        "guest_management.state.voucher_state.get_db",
+        MagicMock(return_value=db),
+    )
+
+    async for _ in state.start_order_from_landing():
+        pass
+
+    assert state.guest_authenticated is False
+    assert state.authenticated_guest is None
+    assert state.current_guest is None
+
+
+def test_load_guest_by_id_cannot_switch_authenticated_voucher_guest():
+    state = VoucherState()
+    state.guest_authenticated = True
+    state.authenticated_guest = {
+        "event_id": 18,
+        "guest_id": "G001",
+        "name": "Guest One",
+        "amount": 100,
+        "status": "Present",
+    }
+    state.current_guest = state.authenticated_guest
+
+    state.load_guest_by_id("G002")
+
+    assert state.current_guest is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_purchase_uses_authenticated_guest_not_current_guest(monkeypatch):
+    state = VoucherState()
+    state.current_event_id = "1"
+    state.current_stall = {"id": 10, "event_id": 1}
+    state.order_items = [{"id": 100, "item_name": "Item", "price": 10}]
+    state.order_total = 10
+    state.guest_authenticated = True
+    state.authenticated_guest = {
+        "event_id": 1,
+        "guest_id": "G001",
+        "name": "Guest One",
+        "amount": 100,
+        "status": "Present",
+    }
+    state.current_guest = {
+        "event_id": 1,
+        "guest_id": "ATTACKER",
+        "name": "Wrong Guest",
+        "amount": 9999,
+        "status": "Present",
+    }
+
+    db = MagicMock()
+    db.rpc.return_value.execute.return_value.data = [{
+        "result": "success",
+        "balance_after": 90,
+        "total": 10,
+    }]
+    monkeypatch.setattr(
+        "guest_management.state.voucher_state.get_db",
+        MagicMock(return_value=db),
+    )
+
+    async for _ in state.confirm_purchase():
+        pass
+
+    params = db.rpc.call_args.args[1]
+    assert params["p_event_id"] == 1
+    assert params["p_guest_id"] == "G001"
+    assert params["p_stall_id"] == 10
+
+
+@pytest.mark.asyncio
+async def test_confirm_purchase_rejects_without_authenticated_voucher_session(monkeypatch):
+    state = VoucherState()
+    state.current_event_id = "1"
+    state.current_stall = {"id": 10, "event_id": 1}
+    state.order_items = [{"id": 100}]
+    state.current_guest = {"guest_id": "G001", "status": "Present"}
+
+    db_get = MagicMock()
+    monkeypatch.setattr(
+        "guest_management.state.voucher_state.get_db",
+        db_get,
+    )
+
+    events = []
+    async for event in state.confirm_purchase():
+        events.append(event)
+
+    assert events
+    db_get.assert_not_called()
+    assert "Guest, stall, or event session is invalid" in str(events[0])
+
+
+def test_source_no_longer_uses_guest_id_in_menu_url():
+    from pathlib import Path
+
+    text = Path("guest_management/state/voucher_state.py").read_text(encoding="utf-8-sig")
+
+    assert "stall/menu?stall_id={stall_id}&guest_id={guest_id}" not in text
+    assert "/stall/menu?stall_id={stall_id_int}&event_id={event_id_int}" in text

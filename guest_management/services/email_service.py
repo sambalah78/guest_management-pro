@@ -24,6 +24,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from guest_management.core.exceptions import EmailError, ValidationError
+from guest_management.core.security import create_voucher_access_code
 from guest_management.repositories.email_job_repository import EmailJobRepository
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,12 @@ class EmailService:
         guest_id = str(guest.get("guest_id") or guest.get("ID") or "")
         if not guest_id:
             raise ValidationError("Guest ID is required")
+
+        voucher_access_code = create_voucher_access_code(
+            event_id,
+            guest_id,
+        )
+        guest_id_display = html.escape(guest_id)
 
         name = html.escape(str(guest.get("name") or guest.get("Name") or "Guest"))
         table = html.escape(str(guest.get("table_number") or guest.get("Table") or "TBD"))
@@ -296,6 +303,76 @@ class EmailService:
             <!-- EVENT INVITATION -->
             {invitation_html}
 
+            <!-- VOUCHER ACCESS -->
+            <div style="
+                margin:28px 0 0;
+                padding:22px 18px;
+                text-align:center;
+                background:#171614;
+                border:1px solid #c9a227;
+                border-radius:16px;
+            ">
+
+                <div style="
+                    font-size:11px;
+                    text-transform:uppercase;
+                    letter-spacing:1.8px;
+                    color:#c9a227;
+                    margin-bottom:10px;
+                ">
+                    Voucher Access Code
+                </div>
+
+                <div style="
+                    font-size:11px;
+                    text-transform:uppercase;
+                    letter-spacing:1.5px;
+                    color:#918d84;
+                    margin-bottom:6px;
+                ">
+                    Guest ID
+                </div>
+
+                <div style="
+                    font-size:15px;
+                    font-weight:600;
+                    color:#f5f0e5;
+                    margin-bottom:16px;
+                ">
+                    {guest_id_display}
+                </div>
+
+                <div style="
+                    font-size:11px;
+                    text-transform:uppercase;
+                    letter-spacing:1.5px;
+                    color:#918d84;
+                    margin-bottom:6px;
+                ">
+                    Access Code
+                </div>
+
+                <div style="
+                    font-size:22px;
+                    font-weight:700;
+                    letter-spacing:3px;
+                    font-family:Courier New,monospace;
+                    color:#f5f0e5;
+                    margin-bottom:10px;
+                ">
+                    {voucher_access_code}
+                </div>
+
+                <div style="
+                    font-size:12px;
+                    line-height:1.6;
+                    color:#918d84;
+                ">
+                    Use your Guest ID and Access Code together at voucher stalls.
+                </div>
+
+            </div>
+
             <!-- PERSONAL QR -->
             <div style="
                 margin:30px 0 0;
@@ -413,6 +490,8 @@ class EmailService:
             f"Time: {time}\n"
             f"Venue: {venue}\n"
             f"Table: {table}\n\n"
+            f"Guest ID: {guest_id}\n"
+            f"Voucher Access Code: {voucher_access_code}\n\n"
             "Please present your event QR code at the entrance.\n"
         )
 

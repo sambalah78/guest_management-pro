@@ -17,6 +17,7 @@ from guest_management.database_client import get_db
 from guest_management.state.auth_state import AuthState
 from guest_management.services.auth_service import AuthService
 from guest_management.services.event_service import EventService
+from guest_management.core.security import verify_voucher_access_code
 import logging
 
 logger = logging.getLogger(__name__)
@@ -105,11 +106,50 @@ class VoucherState(rx.State):
     transactions_list: List[dict] = []
 
     async def continue_to_menu(self):
-        stall_id = self.url_stall_id
-        guest_id = self.authenticated_guest.get("guest_id", "") if self.authenticated_guest else ""
-        if stall_id and guest_id:
-            self.current_guest = self.authenticated_guest
-            yield rx.redirect(f"/stall/menu?stall_id={stall_id}&guest_id={guest_id}")
+        """Enter the menu using the authenticated voucher session only."""
+        stall_id = str(self.url_stall_id or "").strip()
+        event_id = str(self.url_event_id or self.current_event_id or "").strip()
+        guest = self.authenticated_guest
+
+        if not self.guest_authenticated or not guest:
+            yield rx.toast.error("Please verify your Guest ID and Voucher Access Code first")
+            return
+
+        guest_id = str(guest.get("guest_id") or "").strip()
+        try:
+            event_id_int = int(event_id)
+            stall_id_int = int(stall_id)
+            guest_event_id = int(guest.get("event_id"))
+        except (TypeError, ValueError):
+            yield rx.toast.error("Invalid stall or event information")
+            return
+
+        if not guest_id or guest_event_id != event_id_int:
+            self.current_guest = None
+            self.guest_authenticated = False
+            self.authenticated_guest = None
+            yield rx.toast.error("Guest session is invalid for this event")
+            return
+
+        if (
+            not self.current_stall
+            or self.current_stall.get("id") != stall_id_int
+            or int(self.current_stall.get("event_id", -1)) != event_id_int
+        ):
+            self.current_stall = None
+            try:
+                self.current_stall = None if not self.load_stall_by_id(stall_id_int) else self.current_stall
+            except (TypeError, ValueError):
+                self.current_stall = None
+
+        if not self.current_stall:
+            yield rx.toast.error("Stall not found")
+            return
+
+        self.current_guest = guest
+        yield rx.redirect(
+            f"/stall/menu?stall_id={stall_id_int}&event_id={event_id_int}"
+        )
     async def show_guest_history(self, guest: dict):
         """Load and display purchase history for a guest within the current event."""
         try:
@@ -228,6 +268,7 @@ class VoucherState(rx.State):
     url_stall_id: str = ""
     url_event_id: str = ""
     guest_id_input: str = ""
+    voucher_access_code_input: str = ""
     guest_authenticated: bool = False
     authenticated_guest: Optional[dict] = None
     params_loaded: bool = False
@@ -858,24 +899,52 @@ class VoucherState(rx.State):
         self.order_total = sum(i.get("price", 0) for i in self.order_items)
 
     async def confirm_purchase(self):
-        """Complete a voucher purchase atomically in PostgreSQL."""
+        """Complete a voucher purchase using the authenticated guest session."""
         if not self.order_items:
             yield rx.toast.error("No items selected")
             return
-        if not self.current_guest or not self.current_stall or not self.current_event_id:
+
+        guest = self.authenticated_guest
+        if (
+            not self.guest_authenticated
+            or not guest
+            or not self.current_stall
+            or not self.current_event_id
+        ):
             yield rx.toast.error("Guest, stall, or event session is invalid")
             return
+
+        try:
+            event_id = int(self.current_event_id)
+            guest_event_id = int(guest.get("event_id"))
+            stall_event_id = int(self.current_stall.get("event_id"))
+        except (TypeError, ValueError):
+            yield rx.toast.error("Guest, stall, or event session is invalid")
+            return
+
+        guest_id = str(guest.get("guest_id") or "").strip()
+        if (
+            not guest_id
+            or guest_event_id != event_id
+            or stall_event_id != event_id
+        ):
+            self.current_guest = None
+            yield rx.toast.error("Guest, stall, or event session is invalid")
+            return
+
+        # The authenticated voucher session is authoritative.
+        # Never derive the purchaser from current_guest or URL parameters.
+        self.current_guest = guest
 
         self.is_loading = True
         yield
         try:
-            from guest_management.database_client import get_db
             items = [{"id": item.get("id")} for item in self.order_items]
             response = get_db().rpc(
                 "process_voucher_purchase",
                 {
-                    "p_event_id": int(self.current_event_id),
-                    "p_guest_id": str(self.current_guest["guest_id"]),
+                    "p_event_id": event_id,
+                    "p_guest_id": guest_id,
                     "p_stall_id": int(self.current_stall["id"]),
                     "p_items": items,
                 },
@@ -889,13 +958,19 @@ class VoucherState(rx.State):
                     "not_found": "Guest not found",
                     "invalid": "Invalid purchase request",
                 }
-                yield rx.toast.error(messages.get(status, result.get("message", "Purchase failed")))
+                yield rx.toast.error(
+                    messages.get(
+                        status,
+                        result.get("message", "Purchase failed"),
+                    )
+                )
                 return
 
             new_balance = float(result.get("balance_after") or 0)
             total = float(result.get("total") or 0)
             items_summary = ", ".join(
-                f"{item.get('item_name', 'Item')}" for item in self.order_items
+                f"{item.get('item_name', 'Item')}"
+                for item in self.order_items
             )
             self.order_receipt = {
                 "items": self.order_items,
@@ -907,60 +982,90 @@ class VoucherState(rx.State):
             self.order_total = 0
             self.show_purchase_receipt = True
             self.current_guest["amount"] = new_balance
-            if self.authenticated_guest:
-                self.authenticated_guest["amount"] = new_balance
-            yield rx.toast.success(f"Purchase completed: RM {total:.2f}")
+            self.authenticated_guest["amount"] = new_balance
+            yield rx.toast.success(
+                f"Purchase completed: RM {total:.2f}"
+            )
         except Exception:
             logger.exception("Atomic voucher purchase failed")
-            yield rx.toast.error("Purchase failed. Your balance was not changed.")
+            yield rx.toast.error(
+                "Purchase failed. Your balance was not changed."
+            )
         finally:
             self.is_loading = False
             yield
 
     def load_guest_by_id(self, guest_id: str):
-        for g in self.guest_data:
-            if g.get("ID") == guest_id or g.get("guest_id") == guest_id:
-                self.current_guest = {
-                    "name": g.get("Name", ""),
-                    "guest_id": g.get("ID", g.get("guest_id", "")),
-                    "amount": g.get("amount", 0),
-                    "email": g.get("Email", ""),
-                    "status": g.get("Status", "")
-                }
-                return
+        """Sync the display guest from the authenticated voucher session.
 
-        db = get_db()
-        res = db.table("guests").select("*").eq("guest_id", guest_id).eq("event_id", int(self.current_event_id)).execute()
-        if res.data:
-            guest = res.data[0]
-            self.current_guest = {
-                "name": guest.get("name", ""),
-                "guest_id": guest.get("guest_id", ""),
-                "amount": guest.get("amount", 0),
-                "email": guest.get("email", ""),
-                "status": guest.get("status", "")
-            }
+        This compatibility method must never load an arbitrary guest by ID.
+        Guest ID is an identifier, not an authorization credential.
+        """
+        authenticated = self.authenticated_guest
+        expected_id = str(authenticated.get("guest_id") or "").strip() if authenticated else ""
+        provided_id = str(guest_id or "").strip()
+
+        if not self.guest_authenticated or not authenticated:
+            self.current_guest = None
+            return
+
+        if not expected_id or provided_id != expected_id:
+            logger.warning("Rejected voucher guest context switch for guest ID %s", provided_id)
+            self.current_guest = None
+            return
+
+        self.current_guest = authenticated
 
     def setup_stall_menu(self):
+        """Load the public stall and bind it to the authenticated guest session."""
         import urllib.parse
-        query_str = self.router.url.query
-        if query_str:
-            if query_str.startswith('?'):
-                query_str = query_str[1:]
-            params = urllib.parse.parse_qs(query_str)
-            stall_id = params.get("stall_id", [""])[0]
-            guest_id = params.get("guest_id", [""])[0]
-        else:
-            stall_id = ""
-            guest_id = ""
+
+        query_str = self.router.url.query or ""
+        if query_str.startswith("?"):
+            query_str = query_str[1:]
+
+        params = urllib.parse.parse_qs(query_str) if query_str else {}
+        stall_id = str(params.get("stall_id", [""])[0] or "").strip()
+        event_id = str(params.get("event_id", [""])[0] or "").strip()
+
+        self.url_stall_id = stall_id
+        if event_id:
+            try:
+                event_id_int = int(event_id)
+                if self.authenticated_guest:
+                    session_event_id = int(self.authenticated_guest.get("event_id"))
+                    if session_event_id != event_id_int:
+                        self.reset_stall_session()
+                self.url_event_id = str(event_id_int)
+                self.current_event_id = str(event_id_int)
+            except (TypeError, ValueError):
+                self.current_guest = None
+                self.current_stall = None
+                return
 
         if stall_id:
             try:
                 self.load_stall_by_id(int(stall_id))
             except ValueError:
+                self.current_stall = None
+
+        authenticated = self.authenticated_guest
+        if (
+            self.guest_authenticated
+            and authenticated
+            and self.current_stall
+        ):
+            try:
+                if (
+                    int(authenticated.get("event_id"))
+                    == int(self.current_stall.get("event_id"))
+                ):
+                    self.current_guest = authenticated
+                    return
+            except (TypeError, ValueError):
                 pass
-        if guest_id:
-            self.load_guest_by_id(guest_id)
+
+        self.current_guest = None
 
     async def load_stall_from_params(self):
         import urllib.parse
@@ -984,7 +1089,20 @@ class VoucherState(rx.State):
                 self.url_event_id = path_parts[3]
 
         if self.url_stall_id and self.url_event_id:
-            self.current_event_id = self.url_event_id
+            try:
+                requested_event_id = int(self.url_event_id)
+                if self.authenticated_guest:
+                    session_event_id = int(self.authenticated_guest.get("event_id"))
+                    if session_event_id != requested_event_id:
+                        self.reset_stall_session()
+                self.current_event_id = str(requested_event_id)
+            except (TypeError, ValueError):
+                self.reset_stall_session()
+                self.current_guest = None
+                self.stall_load_error = True
+                self.params_loaded = True
+                yield
+                return
             try:
                 stall_id_int = int(self.url_stall_id)
                 success = self.load_stall_by_id(stall_id_int)
@@ -1011,12 +1129,17 @@ class VoucherState(rx.State):
 
     async def start_order_from_landing(self):
         """Authenticate a checked-in guest for the public voucher flow."""
-        stall_id = self.url_stall_id
-        event_id = self.url_event_id
-        guest_id = self.guest_id_input.strip()
+        stall_id = str(self.url_stall_id or "").strip()
+        event_id = str(self.url_event_id or "").strip()
+        guest_id = str(self.guest_id_input or "").strip()
+        access_code = str(self.voucher_access_code_input or "").strip().upper()
 
         if not guest_id:
             yield rx.toast.error("Please enter Guest ID")
+            return
+
+        if not access_code:
+            yield rx.toast.error("Please enter Voucher Access Code")
             return
 
         if not stall_id or not event_id:
@@ -1030,8 +1153,6 @@ class VoucherState(rx.State):
             yield rx.toast.error("Invalid stall or event ID format")
             return
 
-        # load_stall_by_id() is already event-scoped by the current
-        # event context established from the public URL.
         if (
             not self.current_stall
             or self.current_stall.get("id") != stall_id_int
@@ -1039,17 +1160,16 @@ class VoucherState(rx.State):
         ):
             self.load_stall_by_id(stall_id_int)
 
-            if not self.current_stall:
-                yield rx.toast.error("Stall not found")
-                return
+        if not self.current_stall:
+            yield rx.toast.error("Stall not found")
+            return
 
-            if int(self.current_stall.get("event_id", -1)) != event_id_int:
-                self.current_stall = None
-                yield rx.toast.error("Invalid stall or event information")
-                return
+        if int(self.current_stall.get("event_id", -1)) != event_id_int:
+            self.current_stall = None
+            yield rx.toast.error("Invalid stall or event information")
+            return
 
         db = get_db()
-
         res = (
             db.table("guests")
             .select("*")
@@ -1058,11 +1178,15 @@ class VoucherState(rx.State):
             .execute()
         )
 
-        if not res.data:
-            yield rx.toast.error("Guest ID not found")
-            return
+        guest = res.data[0] if res.data else None
 
-        guest = res.data[0]
+        if not guest or not verify_voucher_access_code(
+            event_id_int,
+            guest_id,
+            access_code,
+        ):
+            yield rx.toast.error("Invalid Guest ID or Voucher Access Code")
+            return
 
         if guest.get("status") != "Present":
             yield rx.toast.error(
@@ -1070,20 +1194,15 @@ class VoucherState(rx.State):
             )
             return
 
-        # Guest IDs may contain quotes, backslashes, or other characters.
-        # JSON encoding makes the value safe to embed as a JavaScript string.
         stored_guest_id = json.dumps(str(guest["guest_id"]))
-
         yield rx.call_script(
             f"""
             localStorage.setItem("last_guest_id", {stored_guest_id});
             """
         )
 
-        # Store initial amount from full_data.
         initial_amount = guest.get("amount", 0)
         full_data = guest.get("full_data")
-
         if full_data:
             try:
                 row = (
@@ -1100,21 +1219,33 @@ class VoucherState(rx.State):
             except Exception:
                 pass
 
-        guest["initial_amount"] = initial_amount
+        authenticated_guest = {
+            "event_id": event_id_int,
+            "guest_id": str(guest.get("guest_id") or ""),
+            "name": str(guest.get("name") or ""),
+            "amount": guest.get("amount", 0),
+            "email": str(guest.get("email") or ""),
+            "status": str(guest.get("status") or ""),
+            "initial_amount": initial_amount,
+        }
 
-        self.authenticated_guest = guest
+        self.authenticated_guest = authenticated_guest
+        self.current_guest = authenticated_guest
         self.guest_authenticated = True
         self.guest_id_input = ""
+        self.voucher_access_code_input = ""
 
         yield rx.toast.success(
-            f"Welcome, {guest.get('name')}!"
+            f"Welcome, {authenticated_guest.get('name')}!"
         )
         yield
 
     def reset_stall_session(self):
         self.guest_authenticated = False
         self.authenticated_guest = None
+        self.current_guest = None
         self.guest_id_input = ""
+        self.voucher_access_code_input = ""
 
     def scan_new_stall(self):
         self.reset_stall_session()
@@ -1122,22 +1253,34 @@ class VoucherState(rx.State):
     def set_guest_id_input(self, value: str):
         self.guest_id_input = value
 
+    def set_voucher_access_code_input(self, value: str):
+        self.voucher_access_code_input = str(value or "").strip().upper()
+
     def clear_stored_guest(self):
         yield rx.call_script("localStorage.removeItem('last_guest_id');")
         self.guest_id_input = ""
-        yield rx.toast.info("Cleared saved guest ID")
+        self.voucher_access_code_input = ""
+        self.authenticated_guest = None
+        self.current_guest = None
+        self.guest_authenticated = False
+        yield rx.toast.info("Cleared saved guest ID and voucher session")
 
     def set_url_params(self, stall_id: str, event_id: str):
-        self.url_stall_id = stall_id
-        self.url_event_id = event_id
+        self.url_stall_id = str(stall_id or "").strip()
+        self.url_event_id = str(event_id or "").strip()
 
-        if not stall_id or not event_id:
+        if not self.url_stall_id or not self.url_event_id:
             self.current_stall = None
             return
 
         try:
-            self.current_event_id = str(int(event_id))
-            self.load_stall_by_id(int(stall_id))
+            event_id_int = int(self.url_event_id)
+            if self.authenticated_guest:
+                session_event_id = int(self.authenticated_guest.get("event_id"))
+                if session_event_id != event_id_int:
+                    self.reset_stall_session()
+            self.current_event_id = str(event_id_int)
+            self.load_stall_by_id(int(self.url_stall_id))
         except (TypeError, ValueError):
             self.current_stall = None
 

@@ -112,6 +112,30 @@ def verify_qr_token(event_id: int, guest_id: str, token: str) -> bool:
 
 
 
+def create_voucher_access_code(event_id: int, guest_id: str) -> str:
+    """Create a deterministic, non-forgeable voucher access code."""
+    payload = f"voucher-access:{int(event_id)}:{guest_id.strip()}".encode("utf-8")
+    digest = hmac.new(
+        settings.qr_secret.encode("utf-8"),
+        payload,
+        hashlib.sha256,
+    ).hexdigest().upper()
+    return digest[:16]
+
+
+def verify_voucher_access_code(
+    event_id: int,
+    guest_id: str,
+    code: str,
+) -> bool:
+    """Verify a voucher access code for one guest/event pair."""
+    expected = create_voucher_access_code(event_id, guest_id)
+    provided = str(code or "").strip().upper()
+    if len(provided) != len(expected):
+        return False
+    return hmac.compare_digest(expected, provided)
+
+
 def extract_scan_payload(raw: str) -> tuple[str | None, str | None, str | None]:
     """Extract guest_id/token/event_id from a QR value or plain guest ID.
 

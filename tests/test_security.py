@@ -1,4 +1,4 @@
-﻿from guest_management.core.security import (
+from guest_management.core.security import (
     create_qr_token,
     create_session_id,
     decrypt_session_token,
@@ -6,6 +6,8 @@
     extract_scan_payload,
     hash_session_id,
     verify_qr_token,
+    create_voucher_access_code,
+    verify_voucher_access_code,
 )
 
 
@@ -165,3 +167,15 @@ def test_decrypt_session_token_rejects_wrong_key(monkeypatch):
 
     with pytest.raises(ValueError, match="Invalid encrypted session token"):
         decrypt_session_token(encrypted)
+
+
+def test_voucher_access_code_is_bound_to_event_and_guest():
+    code = create_voucher_access_code(18, "GUEST-100")
+
+    assert len(code) == 16
+    assert code == code.upper()
+    assert verify_voucher_access_code(18, "GUEST-100", code)
+    assert verify_voucher_access_code(18, "GUEST-100", code.lower())
+    assert not verify_voucher_access_code(19, "GUEST-100", code)
+    assert not verify_voucher_access_code(18, "GUEST-101", code)
+    assert not verify_voucher_access_code(18, "GUEST-100", code[:-1])
