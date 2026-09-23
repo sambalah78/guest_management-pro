@@ -247,7 +247,9 @@ class AuthState(rx.State):
         # Never retain the password after authentication.
         self.password = ""
 
-        return rx.redirect("/events")
+        return rx.call_script(
+            "window.location.assign('/events');"
+        )
 
     # ------------------------------------------------------------------
     # Logout
