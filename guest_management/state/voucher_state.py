@@ -14,6 +14,9 @@ import pandas as pd
 import qrcode
 
 from guest_management.database_client import get_db
+from guest_management.state.auth_state import AuthState
+from guest_management.services.auth_service import AuthService
+from guest_management.services.event_service import EventService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -101,8 +104,14 @@ class VoucherState(rx.State):
     history_guest: Optional[dict] = None
     transactions_list: List[dict] = []
 
+    async def continue_to_menu(self):
+        stall_id = self.url_stall_id
+        guest_id = self.authenticated_guest.get("guest_id", "") if self.authenticated_guest else ""
+        if stall_id and guest_id:
+            self.current_guest = self.authenticated_guest
+            yield rx.redirect(f"/stall/menu?stall_id={stall_id}&guest_id={guest_id}")
     async def show_guest_history(self, guest: dict):
-        """Load and display purchase history for a guest."""
+        """Load and display purchase history for a guest within the current event."""
         try:
             guest_id = (
                 guest.get("ID")
@@ -115,6 +124,41 @@ class VoucherState(rx.State):
                 yield rx.toast.error("Guest ID not found")
                 return
 
+            # The dashboard supplies the event context. Prefer the guest's
+            # event_id when available, but never allow a cross-event lookup.
+            event_id = guest.get("event_id") or self.current_event_id
+
+            if not event_id:
+                yield rx.toast.error("Event context not found")
+                return
+
+            try:
+                event_id_int = int(event_id)
+            except (TypeError, ValueError):
+                yield rx.toast.error("Invalid event context")
+                return
+
+            # This method is an administrative dashboard operation.
+            auth = await self.get_state(AuthState)
+
+            if not auth.user_id:
+                yield rx.toast.error("Authentication required")
+                return
+
+            if not AuthService.can_manage_events(auth.user):
+                yield rx.toast.error(
+                    "You are not authorized to view purchase history"
+                )
+                return
+
+            # Confirm the authenticated administrator is authorized for
+            # this specific event.
+            EventService().get_event(
+                event_id_int,
+                auth.user_id,
+                auth.user,
+            )
+
             self.history_guest = guest
             self.transactions_list = []
             self.show_history_modal = True
@@ -125,12 +169,12 @@ class VoucherState(rx.State):
                 db.table("transactions")
                 .select("*")
                 .eq("guest_id", str(guest_id))
+                .eq("event_id", event_id_int)
                 .order("created_at", desc=True)
                 .execute()
             )
 
             transactions = response.data or []
-
             formatted_transactions = []
 
             for transaction in transactions:
@@ -166,13 +210,11 @@ class VoucherState(rx.State):
             if not transactions:
                 yield rx.toast.info("No purchase history found")
 
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to load guest purchase history")
             self.transactions_list = []
             self.show_history_modal = False
-            yield rx.toast.error(
-                f"Unable to load purchase history: {str(e)}"
-            )
+            yield rx.toast.error("Unable to load purchase history")
 
     def close_history_modal(self):
         """Close the purchase history modal."""
@@ -227,6 +269,41 @@ class VoucherState(rx.State):
     # STALL MANAGEMENT
     # ========================================================================
 
+    async def _authorize_voucher_admin(self) -> tuple[AuthState, int]:
+        """Authorize the current user to manage vouchers for the current event."""
+        if not self.current_event_id:
+            raise PermissionError("Event is not selected")
+
+        try:
+            event_id = int(self.current_event_id)
+        except (TypeError, ValueError):
+            raise PermissionError("Invalid event ID")
+
+        auth = await self.get_state(AuthState)
+
+        if not auth.user_id or not AuthService.can_manage_events(auth.user):
+            raise PermissionError("Voucher management requires event admin access")
+
+        EventService().get_event(
+            event_id,
+            auth.user_id,
+            auth.user,
+        )
+
+        return auth, event_id
+
+    def _get_current_event_id_for_public_stall(self) -> int | None:
+        """Return the event ID represented by the public stall URL."""
+        event_id = self.url_event_id or self.current_event_id
+
+        if not event_id:
+            return None
+
+        try:
+            return int(event_id)
+        except (TypeError, ValueError):
+            return None
+
     async def load_stalls(self):
         if not self.current_event_id:
             return
@@ -267,18 +344,43 @@ class VoucherState(rx.State):
             yield
 
     def load_stall_by_id(self, stall_id: int) -> bool:
+        event_id = self._get_current_event_id_for_public_stall()
+
+        if event_id is None:
+            self.current_stall = None
+            return False
+
         for stall in self.stalls_list:
-            if stall["id"] == stall_id:
+            if (
+                stall.get("id") == stall_id
+                and stall.get("event_id") == event_id
+            ):
                 self.current_stall = stall
                 return True
 
         db = get_db()
-        res = db.table("stalls").select("*").eq("id", stall_id).execute()
+
+        res = (
+            db.table("stalls")
+            .select("*")
+            .eq("id", stall_id)
+            .eq("event_id", event_id)
+            .execute()
+        )
+
         if res.data:
             stall = res.data[0]
-            menu_res = db.table("menu_items").select("*").eq("stall_id", stall["id"]).execute()
+
+            menu_res = (
+                db.table("menu_items")
+                .select("*")
+                .eq("stall_id", stall["id"])
+                .execute()
+            )
+
             stall["menu_items"] = menu_res.data or []
             self.current_stall = stall
+            self.current_event_id = str(event_id)
             return True
 
         self.current_stall = None
@@ -299,6 +401,13 @@ class VoucherState(rx.State):
         self.stall_name = value
 
     async def add_stall(self):
+        try:
+            _, event_id = await self._authorize_voucher_admin()
+        except Exception as e:
+            logger.warning("Unauthorized voucher stall creation attempt: %s", e)
+            yield rx.toast.error("You are not authorized to manage this event")
+            return
+
         if not self.stall_name:
             yield rx.toast.error("Please enter stall name")
             return
@@ -316,7 +425,7 @@ class VoucherState(rx.State):
             base_url = base_url.rstrip('/')
 
             result = db.table("stalls").insert({
-                "event_id": int(self.current_event_id),
+                "event_id": event_id,
                 "stall_name": self.stall_name,
                 "qr_code": ""
             }).execute()
@@ -380,6 +489,13 @@ class VoucherState(rx.State):
             self.menu_item_price = 0
 
     async def add_menu_item(self):
+        try:
+            _, event_id = await self._authorize_voucher_admin()
+        except Exception as e:
+            logger.warning("Unauthorized voucher menu creation attempt: %s", e)
+            yield rx.toast.error("You are not authorized to manage this event")
+            return
+
         if not self.menu_item_name or self.menu_item_price <= 0:
             yield rx.toast.error("Please fill item name and valid price")
             return
@@ -389,6 +505,19 @@ class VoucherState(rx.State):
 
         try:
             db = get_db()
+
+            stall_res = (
+                db.table("stalls")
+                .select("id")
+                .eq("id", self.selected_stall_id)
+                .eq("event_id", event_id)
+                .execute()
+            )
+
+            if not stall_res.data:
+                yield rx.toast.error("Invalid stall for this event")
+                return
+
             result = db.table("menu_items").insert({
                 "stall_id": self.selected_stall_id,
                 "item_name": self.menu_item_name,
@@ -422,6 +551,13 @@ class VoucherState(rx.State):
         yield
 
     async def update_stall_name(self):
+        try:
+            _, event_id = await self._authorize_voucher_admin()
+        except Exception as e:
+            logger.warning("Unauthorized voucher stall update attempt: %s", e)
+            yield rx.toast.error("You are not authorized to manage this event")
+            return
+
         if not self.editing_stall or not self.edit_stall_name.strip():
             yield rx.toast.error("Stall name cannot be empty")
             return
@@ -433,7 +569,7 @@ class VoucherState(rx.State):
             db = get_db()
             result = db.table("stalls").update({
                 "stall_name": self.edit_stall_name.strip()
-            }).eq("id", self.editing_stall["id"]).eq("event_id", int(self.current_event_id)).execute()
+            }).eq("id", self.editing_stall["id"]).eq("event_id", event_id).execute()
 
             if result.data:
                 await self.load_stalls()
@@ -472,6 +608,13 @@ class VoucherState(rx.State):
         yield
 
     async def update_menu_item(self):
+        try:
+            _, event_id = await self._authorize_voucher_admin()
+        except Exception as e:
+            logger.warning("Unauthorized voucher menu update attempt: %s", e)
+            yield rx.toast.error("You are not authorized to manage this event")
+            return
+
         if not self.editing_item:
             return
 
@@ -488,10 +631,29 @@ class VoucherState(rx.State):
 
         try:
             db = get_db()
-            result = db.table("menu_items").update({
-                "item_name": self.edit_item_name.strip(),
-                "price": self.edit_item_price
-            }).eq("id", self.editing_item["item_id"]).eq("stall_id", self.editing_item["stall_id"]).execute()
+
+            stall_res = (
+                db.table("stalls")
+                .select("id")
+                .eq("id", self.editing_item["stall_id"])
+                .eq("event_id", event_id)
+                .execute()
+            )
+
+            if not stall_res.data:
+                yield rx.toast.error("Invalid stall for this event")
+                return
+
+            result = (
+                db.table("menu_items")
+                .update({
+                    "item_name": self.edit_item_name.strip(),
+                    "price": self.edit_item_price,
+                })
+                .eq("id", self.editing_item["item_id"])
+                .eq("stall_id", self.editing_item["stall_id"])
+                .execute()
+            )
 
             if result.data:
                 await self.load_stalls()
@@ -535,6 +697,13 @@ class VoucherState(rx.State):
         yield
 
     async def confirm_delete_stall(self):
+        try:
+            _, event_id = await self._authorize_voucher_admin()
+        except Exception as e:
+            logger.warning("Unauthorized voucher stall deletion attempt: %s", e)
+            yield rx.toast.error("You are not authorized to manage this event")
+            return
+
         if not self.stall_to_delete:
             yield rx.toast.error("No stall selected for deletion")
             return
@@ -547,8 +716,28 @@ class VoucherState(rx.State):
 
         try:
             db = get_db()
+
+            stall_res = (
+                db.table("stalls")
+                .select("id")
+                .eq("id", stall_id)
+                .eq("event_id", event_id)
+                .execute()
+            )
+
+            if not stall_res.data:
+                yield rx.toast.error("Invalid stall for this event")
+                return
+
             db.table("menu_items").delete().eq("stall_id", stall_id).execute()
-            result = db.table("stalls").delete().eq("id", stall_id).eq("event_id", int(self.current_event_id)).execute()
+
+            result = (
+                db.table("stalls")
+                .delete()
+                .eq("id", stall_id)
+                .eq("event_id", event_id)
+                .execute()
+            )
 
             if result.data:
                 await self.load_stalls()
@@ -570,12 +759,38 @@ class VoucherState(rx.State):
         self.stall_to_delete = None
 
     async def delete_menu_item(self, stall_id: int, item_id: int, item_name: str):
+        try:
+            _, event_id = await self._authorize_voucher_admin()
+        except Exception as e:
+            logger.warning("Unauthorized voucher menu deletion attempt: %s", e)
+            yield rx.toast.error("You are not authorized to manage this event")
+            return
+
         self.is_loading = True
         yield
 
         try:
             db = get_db()
-            result = db.table("menu_items").delete().eq("id", item_id).eq("stall_id", stall_id).execute()
+
+            stall_res = (
+                db.table("stalls")
+                .select("id")
+                .eq("id", stall_id)
+                .eq("event_id", event_id)
+                .execute()
+            )
+
+            if not stall_res.data:
+                yield rx.toast.error("Invalid stall for this event")
+                return
+
+            result = (
+                db.table("menu_items")
+                .delete()
+                .eq("id", item_id)
+                .eq("stall_id", stall_id)
+                .execute()
+            )
 
             if result.data:
                 await self.load_stalls()
@@ -595,18 +810,25 @@ class VoucherState(rx.State):
         yield
 
     async def confirm_delete_all_stalls(self):
+        try:
+            _, event_id = await self._authorize_voucher_admin()
+        except Exception as e:
+            logger.warning("Unauthorized bulk voucher deletion attempt: %s", e)
+            yield rx.toast.error("You are not authorized to manage this event")
+            return
+
         self.is_loading = True
         yield
 
         try:
             db = get_db()
-            stalls_res = db.table("stalls").select("id").eq("event_id", int(self.current_event_id)).execute()
+            stalls_res = db.table("stalls").select("id").eq("event_id", event_id).execute()
             stall_ids = [s["id"] for s in stalls_res.data] if stalls_res.data else []
 
             if stall_ids:
                 db.table("menu_items").delete().in_("stall_id", stall_ids).execute()
 
-            db.table("stalls").delete().eq("event_id", int(self.current_event_id)).execute()
+            db.table("stalls").delete().eq("event_id", event_id).execute()
             await self.load_stalls()
             self.is_loading = False
             self.show_delete_all_stalls_confirm = False
@@ -777,15 +999,18 @@ class VoucherState(rx.State):
         yield
 
     async def load_stall_from_url(self):
-        if not self.url_stall_id:
+        if not self.url_stall_id or not self.url_event_id:
             return
+
         try:
+            self.current_event_id = str(int(self.url_event_id))
             stall_id = int(self.url_stall_id)
             self.load_stall_by_id(stall_id)
-        except:
-            pass
+        except (TypeError, ValueError):
+            self.current_stall = None
 
     async def start_order_from_landing(self):
+        """Authenticate a checked-in guest for the public voucher flow."""
         stall_id = self.url_stall_id
         event_id = self.url_event_id
         guest_id = self.guest_id_input.strip()
@@ -801,55 +1026,90 @@ class VoucherState(rx.State):
         try:
             event_id_int = int(event_id)
             stall_id_int = int(stall_id)
-        except ValueError as e:
+        except (TypeError, ValueError):
             yield rx.toast.error("Invalid stall or event ID format")
             return
 
-        if not self.current_stall or self.current_stall.get("id") != stall_id_int:
+        # load_stall_by_id() is already event-scoped by the current
+        # event context established from the public URL.
+        if (
+            not self.current_stall
+            or self.current_stall.get("id") != stall_id_int
+            or str(self.current_stall.get("event_id")) != str(event_id_int)
+        ):
             self.load_stall_by_id(stall_id_int)
+
             if not self.current_stall:
                 yield rx.toast.error("Stall not found")
                 return
 
+            if int(self.current_stall.get("event_id", -1)) != event_id_int:
+                self.current_stall = None
+                yield rx.toast.error("Invalid stall or event information")
+                return
+
         db = get_db()
-        res = db.table("guests").select("*").eq("guest_id", guest_id).eq("event_id", event_id_int).execute()
+
+        res = (
+            db.table("guests")
+            .select("*")
+            .eq("guest_id", guest_id)
+            .eq("event_id", event_id_int)
+            .execute()
+        )
+
         if not res.data:
             yield rx.toast.error("Guest ID not found")
             return
 
         guest = res.data[0]
+
         if guest.get("status") != "Present":
-            yield rx.toast.error("You must check in at the event entrance first")
+            yield rx.toast.error(
+                "You must check in at the event entrance first"
+            )
             return
 
-        yield rx.call_script(f"""
-            localStorage.setItem('last_guest_id', '{guest['guest_id']}');
-        """)
+        # Guest IDs may contain quotes, backslashes, or other characters.
+        # JSON encoding makes the value safe to embed as a JavaScript string.
+        stored_guest_id = json.dumps(str(guest["guest_id"]))
 
+        yield rx.call_script(
+            f"""
+            localStorage.setItem("last_guest_id", {stored_guest_id});
+            """
+        )
+
+        # Store initial amount from full_data.
         initial_amount = guest.get("amount", 0)
         full_data = guest.get("full_data")
+
         if full_data:
             try:
-                row = json.loads(full_data) if isinstance(full_data, str) else full_data
-                initial_amount = float(row.get("Amount", row.get("amount", initial_amount)))
-            except:
+                row = (
+                    json.loads(full_data)
+                    if isinstance(full_data, str)
+                    else full_data
+                )
+                initial_amount = float(
+                    row.get(
+                        "Amount",
+                        row.get("amount", initial_amount),
+                    )
+                )
+            except Exception:
                 pass
 
         guest["initial_amount"] = initial_amount
+
         self.authenticated_guest = guest
         self.guest_authenticated = True
         self.guest_id_input = ""
 
-        yield rx.toast.success(f"Welcome, {guest.get('name')}!")
-
-    async def continue_to_menu(self):
-        stall_id = self.url_stall_id
-        guest_id = self.authenticated_guest.get("guest_id", "") if self.authenticated_guest else ""
-        if stall_id and guest_id:
-            self.current_guest = self.authenticated_guest
-            yield rx.redirect(f"/stall/menu?stall_id={stall_id}&guest_id={guest_id}")
-        else:
-            yield rx.toast.error("Missing stall or guest information")
+        yield rx.toast.success(
+            f"Welcome, {guest.get('name')}!"
+        )
+        yield
 
     def reset_stall_session(self):
         self.guest_authenticated = False
@@ -870,9 +1130,16 @@ class VoucherState(rx.State):
     def set_url_params(self, stall_id: str, event_id: str):
         self.url_stall_id = stall_id
         self.url_event_id = event_id
-        if stall_id and event_id:
-            self.current_event_id = event_id
+
+        if not stall_id or not event_id:
+            self.current_stall = None
+            return
+
+        try:
+            self.current_event_id = str(int(event_id))
             self.load_stall_by_id(int(stall_id))
+        except (TypeError, ValueError):
+            self.current_stall = None
 
     # ========================================================================
     # QR
@@ -913,6 +1180,13 @@ class VoucherState(rx.State):
     # ========================================================================
 
     async def handle_stall_excel_upload(self, files: List[rx.UploadFile]):
+        try:
+            _, event_id = await self._authorize_voucher_admin()
+        except Exception as e:
+            logger.warning("Unauthorized voucher Excel upload attempt: %s", e)
+            yield rx.toast.error("You are not authorized to manage this event")
+            return
+
         if not files or len(files) == 0:
             yield rx.toast.error("No file selected. Please select a file first.")
             return
@@ -1015,7 +1289,7 @@ class VoucherState(rx.State):
                         processed_stalls[stall_name] = stall
                     else:
                         new_stall = db.table("stalls").insert({
-                            "event_id": int(self.current_event_id),
+                            "event_id": event_id,
                             "stall_name": stall_name,
                             "qr_code": ""
                         }).execute()
