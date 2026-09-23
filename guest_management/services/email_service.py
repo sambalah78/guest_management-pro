@@ -1,6 +1,6 @@
 """Application email service.
 
-The web application never talks directly to SendGrid.
+The web application never talks directly to the email delivery provider.
 
 Flow:
 
@@ -12,7 +12,7 @@ Flow:
       ↓
     email_worker
       ↓
-    SendGrid
+    Configured email provider
 """
 
 from __future__ import annotations

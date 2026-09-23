@@ -146,10 +146,9 @@ class EmailWorker:
             )
 
         logger.debug(
-            "Using stored QR URL event=%s guest=%s: %s",
+            "Using stored QR event=%s guest=%s",
             event_id,
             guest_id,
-            qr_url,
         )
 
         qr = qrcode.QRCode(
@@ -380,28 +379,16 @@ class EmailWorker:
     # SEND ONE
     # ================================================================
 
-    def send_one(
-            self,
-            job: Dict[str, Any],
-    ) -> str:
-        job_id = int(job["id"])
-        guest_id = str(job["guest_id"])
-        recipient = str(job["recipient"]).strip()
+    def _connect_smtp(self) -> smtplib.SMTP:
+        """Create and authenticate one Gmail SMTP connection."""
 
-        logger.info(
-            "Sending Gmail email job=%s guest=%s recipient=%s",
-            job_id,
-            guest_id,
-            recipient,
-        )
-
-        message = self.build_message(job)
-
-        with smtplib.SMTP(
+        smtp = smtplib.SMTP(
                 settings.smtp_host,
                 settings.smtp_port,
                 timeout=30,
-        ) as smtp:
+        )
+
+        try:
             smtp.ehlo()
             smtp.starttls()
             smtp.ehlo()
@@ -411,7 +398,46 @@ class EmailWorker:
                 settings.smtp_password,
             )
 
+            return smtp
+
+        except Exception:
+            try:
+                smtp.quit()
+            except Exception:
+                smtp.close()
+            raise
+
+    def send_one(
+            self,
+            job: Dict[str, Any],
+            smtp: Optional[smtplib.SMTP] = None,
+    ) -> str:
+        job_id = int(job["id"])
+        guest_id = str(job["guest_id"])
+        recipient = str(job["recipient"]).strip()
+
+        logger.info(
+            "Sending Gmail email job=%s guest=%s",
+            job_id,
+            guest_id,
+        )
+
+        message = self.build_message(job)
+
+        owns_smtp = smtp is None
+
+        if owns_smtp:
+            smtp = self._connect_smtp()
+
+        try:
             smtp.send_message(message)
+
+        finally:
+            if owns_smtp:
+                try:
+                    smtp.quit()
+                except Exception:
+                    smtp.close()
 
         logger.info(
             "Gmail accepted email job=%s",
@@ -434,74 +460,109 @@ class EmailWorker:
             return 0
 
         processed = 0
+        smtp: Optional[smtplib.SMTP] = None
 
-        for job in jobs:
+        try:
+            for job in jobs:
 
-            job_id = int(
-                job["id"]
-            )
-
-            attempts = int(
-                job.get("attempts")
-                or 0
-            )
-
-            try:
-
-                message_id = self.send_one(
-                    job
+                job_id = int(
+                    job["id"]
                 )
 
-                self.repo.mark_sent(
-                    job_id=job_id,
-                    event_id=int(
-                        job["event_id"]
-                    ),
-                    guest_id=str(
-                        job["guest_id"]
-                    ),
-                    provider_message_id=(
-                        message_id
-                    ),
+                attempts = int(
+                    job.get("attempts")
+                    or 0
                 )
-
-                processed += 1
-
-                logger.info(
-                    "Email job %s marked SENT",
-                    job_id,
-                )
-
-            except Exception as exc:
-
-                logger.exception(
-                    "Email job %s failed "
-                    "(attempt %s)",
-                    job_id,
-                    attempts,
-                )
-
-                # ----------------------------------------------------
-                # Retry policy
-                # ----------------------------------------------------
-
-                retry = attempts < settings.email_max_attempts
 
                 try:
 
-                    self.repo.mark_failed(
-                        job_id=job_id,
-                        error=str(exc),
-                        retry=retry,
+                    if smtp is None:
+                        smtp = self._connect_smtp()
+
+                    message_id = self.send_one(
+                        job,
+                        smtp=smtp,
                     )
 
-                except Exception:
+                    self.repo.mark_sent(
+                        job_id=job_id,
+                        event_id=int(
+                            job["event_id"]
+                        ),
+                        guest_id=str(
+                            job["guest_id"]
+                        ),
+                        provider_message_id=(
+                            message_id
+                        ),
+                    )
 
-                    logger.exception(
-                        "Unable to mark "
-                        "email job %s failed",
+                    processed += 1
+
+                    logger.info(
+                        "Email job %s marked SENT",
                         job_id,
                     )
+
+                except Exception as exc:
+
+                    logger.exception(
+                        "Email job %s failed "
+                        "(attempt %s)",
+                        job_id,
+                        attempts,
+                    )
+
+                    # ------------------------------------------------
+                    # Retry policy
+                    # ------------------------------------------------
+
+                    retry = attempts < settings.email_max_attempts
+
+                    try:
+
+                        self.repo.mark_failed(
+                            job_id=job_id,
+                            error=str(exc),
+                            retry=retry,
+                        )
+
+                    except Exception:
+
+                        logger.exception(
+                            "Unable to mark "
+                            "email job %s failed",
+                            job_id,
+                        )
+
+                    # ------------------------------------------------
+                    # Discard a connection after an SMTP/network
+                    # failure so the next job can establish a fresh
+                    # authenticated connection.
+                    # ------------------------------------------------
+
+                    if isinstance(
+                        exc,
+                        (
+                            smtplib.SMTPException,
+                            OSError,
+                            TimeoutError,
+                        ),
+                    ):
+                        if smtp is not None:
+                            try:
+                                smtp.quit()
+                            except Exception:
+                                smtp.close()
+
+                        smtp = None
+
+        finally:
+            if smtp is not None:
+                try:
+                    smtp.quit()
+                except Exception:
+                    smtp.close()
 
         return processed
 

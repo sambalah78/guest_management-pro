@@ -642,14 +642,17 @@ class EmailJobRepository:
         batch_size: int = 50,
     ) -> List[Dict[str, Any]]:
         """
-        Claim queued jobs for the email worker.
+        Atomically claim queued jobs for the email worker.
 
-        SQLite implementation.
+        PostgreSQL:
+            Uses row-level locking with SKIP LOCKED so multiple workers
+            cannot claim the same queued email job.
 
-        A transaction is used so that the SELECT and UPDATE happen
-        together.
+        SQLite:
+            Retains the transaction-based implementation used for local
+            development.
 
-        The worker receives jobs marked as PROCESSING.
+        Stale PROCESSING jobs are requeued before claiming.
         """
 
         batch_size = max(
@@ -702,60 +705,136 @@ class EmailJobRepository:
                         recovered_count,
                     )
 
-                rows = conn.execute(
-                    text(
-                        """
-                        SELECT *
-                        FROM email_jobs
-                        WHERE status = 'queued'
-                          AND (
-                              available_at IS NULL
-                              OR available_at <= :now
-                          )
-                        ORDER BY id ASC
-                        LIMIT :limit
-                        """
-                    ),
-                    {
-                        "now": now,
-                        "limit": batch_size,
-                    },
-                ).mappings().all()
+                # ------------------------------------------------------
+                # PostgreSQL
+                #
+                # Row-level locking prevents two workers from selecting
+                # the same queued jobs concurrently.
+                # ------------------------------------------------------
 
-                if not rows:
-                    return []
+                if conn.dialect.name == "postgresql":
 
-                ids = [
-                    int(row["id"])
-                    for row in rows
-                ]
-
-                for job_id in ids:
-
-                    conn.execute(
+                    rows = conn.execute(
                         text(
                             """
-                            UPDATE email_jobs
-                            SET
-                                status = 'processing',
-                                attempts = COALESCE(attempts, 0) + 1,
-                                locked_at = :locked_at,
-                                updated_at = :updated_at
-                            WHERE id = :id
-                              AND status = 'queued'
+                            SELECT *
+                            FROM email_jobs
+                            WHERE status = 'queued'
+                              AND (
+                                  available_at IS NULL
+                                  OR available_at <= :now
+                              )
+                            ORDER BY id ASC
+                            LIMIT :limit
+                            FOR UPDATE SKIP LOCKED
                             """
                         ),
                         {
-                            "id": job_id,
-                            "locked_at": now,
-                            "updated_at": now,
+                            "now": now,
+                            "limit": batch_size,
                         },
-                    )
+                    ).mappings().all()
 
+                    if not rows:
+                        return []
 
+                    ids = [
+                        int(row["id"])
+                        for row in rows
+                    ]
 
-                # SQLite/text() IN expanding syntax is easier to avoid
-                # here by querying individually in the same transaction.
+                else:
+                    # --------------------------------------------------
+                    # SQLite / local development
+                    #
+                    # SQLite does not provide PostgreSQL-style
+                    # SKIP LOCKED semantics. Keep the existing
+                    # transaction implementation for local development.
+                    # --------------------------------------------------
+
+                    rows = conn.execute(
+                        text(
+                            """
+                            SELECT *
+                            FROM email_jobs
+                            WHERE status = 'queued'
+                              AND (
+                                  available_at IS NULL
+                                  OR available_at <= :now
+                              )
+                            ORDER BY id ASC
+                            LIMIT :limit
+                            """
+                        ),
+                        {
+                            "now": now,
+                            "limit": batch_size,
+                        },
+                    ).mappings().all()
+
+                    if not rows:
+                        return []
+
+                    ids = [
+                        int(row["id"])
+                        for row in rows
+                    ]
+
+                # ------------------------------------------------------
+                # Transition selected jobs to PROCESSING.
+                #
+                # For PostgreSQL the rows are already locked by the
+                # SELECT above, so another worker cannot claim them.
+                #
+                # For SQLite this preserves the existing guarded update.
+                # ------------------------------------------------------
+
+                if conn.dialect.name == "postgresql":
+                    for job_id in ids:
+                        conn.execute(
+                            text(
+                                """
+                                UPDATE email_jobs
+                                SET
+                                    status = 'processing',
+                                    attempts = COALESCE(attempts, 0) + 1,
+                                    locked_at = :locked_at,
+                                    updated_at = :updated_at
+                                WHERE id = :id
+                                  AND status = 'queued'
+                                """
+                            ),
+                            {
+                                "id": job_id,
+                                "locked_at": now,
+                                "updated_at": now,
+                            },
+                        )
+                else:
+                    for job_id in ids:
+                        conn.execute(
+                            text(
+                                """
+                                UPDATE email_jobs
+                                SET
+                                    status = 'processing',
+                                    attempts = COALESCE(attempts, 0) + 1,
+                                    locked_at = :locked_at,
+                                    updated_at = :updated_at
+                                WHERE id = :id
+                                  AND status = 'queued'
+                                """
+                            ),
+                            {
+                                "id": job_id,
+                                "locked_at": now,
+                                "updated_at": now,
+                            },
+                        )
+
+                # ------------------------------------------------------
+                # Re-read the claimed rows inside the same transaction.
+                # ------------------------------------------------------
 
                 result: List[Dict[str, Any]] = []
 
@@ -766,9 +845,12 @@ class EmailJobRepository:
                             SELECT *
                             FROM email_jobs
                             WHERE id = :id
+                              AND status = 'processing'
                             """
                         ),
-                        {"id": job_id},
+                        {
+                            "id": job_id,
+                        },
                     ).mappings().first()
 
                     if row:
@@ -964,9 +1046,12 @@ class EmailJobRepository:
         provider_message_id: str = "",
     ) -> None:
         """
-        Mark an email job as successfully accepted by SendGrid.
+        Mark a processing email job as successfully sent.
 
-        Also updates guests.email_sent=True.
+        The job must currently be in PROCESSING state.
+
+        Also updates guests.email_sent=True for the matching
+        event and guest.
         """
 
         now = self._now()
@@ -987,6 +1072,7 @@ class EmailJobRepository:
                             updated_at = :updated_at
                         WHERE id = :id
                           AND event_id = :event_id
+                          AND status = 'processing'
                         """
                     ),
                     {
@@ -1004,10 +1090,11 @@ class EmailJobRepository:
                 if result.rowcount == 0:
                     raise ValueError(
                         f"Email job {job_id} "
-                        f"not found for event {event_id}"
+                        f"for event {event_id} "
+                        "is not in processing state"
                     )
 
-                conn.execute(
+                guest_result = conn.execute(
                     text(
                         """
                         UPDATE guests
@@ -1024,6 +1111,12 @@ class EmailJobRepository:
                         "updated_at": now,
                     },
                 )
+
+                if guest_result.rowcount == 0:
+                    raise ValueError(
+                        f"Guest {guest_id} "
+                        f"not found for event {event_id}"
+                    )
 
         except SQLAlchemyError as exc:
             self._raise_db(
@@ -1087,6 +1180,7 @@ class EmailJobRepository:
                             locked_at = NULL,
                             updated_at = :updated_at
                         WHERE id = :id
+                          AND status = 'processing'
                         """
                     ),
                     {

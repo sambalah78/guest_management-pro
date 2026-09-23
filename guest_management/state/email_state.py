@@ -1,6 +1,6 @@
 """Email management UI state backed by a durable email queue.
 
-The UI never talks directly to SendGrid.
+The UI never talks directly to the email delivery provider.
 
 All email actions operate on the durable ``email_jobs`` queue.
 The background email worker is responsible for actual delivery.
@@ -28,7 +28,10 @@ from typing import Any, Dict, List, Optional
 
 import reflex as rx
 
-from guest_management.core.exceptions import EventLahError
+from guest_management.core.exceptions import (
+    AuthorizationError,
+    EventLahError,
+)
 from guest_management.repositories import (
 
     GuestRepository,
@@ -503,7 +506,24 @@ class EmailState(rx.State):
     # EMAIL MANAGEMENT
     # ==========================================================================
 
-    def open_email_management(self):
+    async def _authorize_email_event(self, event_id: int) -> dict:
+        """Authorize the authenticated user for email operations on an event."""
+        event_id = int(event_id)
+
+        from guest_management.state.auth_state import AuthState
+
+        auth = await self.get_state(AuthState)
+
+        user_id = str(auth.user_id or "").strip()
+        if not user_id:
+            raise AuthorizationError("Authentication required.")
+
+        return EventService().get_event(
+            event_id,
+            user_id,
+            auth.user,
+        )
+    async def open_email_management(self):
         """Open the dashboard email management panel."""
 
         self.current_event_id = str(
@@ -515,18 +535,20 @@ class EmailState(rx.State):
 
         self.email_management_open = True
 
-        self.load_email_management()
+        await self.load_email_management()
 
     def close_email_management(self):
         """Close the dashboard email management panel."""
 
         self.email_management_open = False
 
-    def load_email_management(self):
+    async def load_email_management(self):
         """Load email counts and recent jobs."""
 
         try:
             event_id = self._get_current_event_id()
+
+            await self._authorize_email_event(event_id)
 
             repo = EmailJobRepository()
 
@@ -576,7 +598,7 @@ class EmailState(rx.State):
         yield
 
         try:
-            self.load_email_management()
+            await self.load_email_management()
 
             if self.email_error:
                 yield rx.toast.error(
@@ -637,6 +659,8 @@ class EmailState(rx.State):
         try:
             event_id = self._get_current_event_id()
 
+            await self._authorize_email_event(event_id)
+
             repo = EmailJobRepository()
 
             job = repo.get_job(
@@ -670,7 +694,7 @@ class EmailState(rx.State):
                 event_id,
             )
 
-            self.load_email_management()
+            await self.load_email_management()
 
             self.email_message = (
                 f"Email job #{job_id} "
@@ -734,6 +758,8 @@ class EmailState(rx.State):
         try:
             event_id = self._get_current_event_id()
 
+            await self._authorize_email_event(event_id)
+
             repo = EmailJobRepository()
 
             job = repo.get_job(
@@ -767,7 +793,7 @@ class EmailState(rx.State):
                     "Unable to queue email for resend."
                 )
 
-            self.load_email_management()
+            await self.load_email_management()
 
             self.email_message = (
                 f"Email job #{job_id} "
@@ -802,10 +828,12 @@ class EmailState(rx.State):
     # DELIVERY DETAILS
     # ==========================================================================
 
-    def open_delivery_details(self, job_id: int):
+    async def open_delivery_details(self, job_id: int):
         """Load one complete event-scoped delivery record and open its modal."""
         try:
             event_id = self._get_current_event_id()
+            await self._authorize_email_event(event_id)
+
             repo = EmailJobRepository()
             job = repo.get_delivery_details(
                 int(job_id),
@@ -959,13 +987,15 @@ class EmailState(rx.State):
         try:
             event_id = self._get_current_event_id()
 
+            await self._authorize_email_event(event_id)
+
             repo = EmailJobRepository()
 
             count = repo.retry_failed_jobs(
                 event_id
             )
 
-            self.load_email_management()
+            await self.load_email_management()
 
             self.email_message = (
                 f"{count} email job(s) "
