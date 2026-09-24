@@ -97,6 +97,24 @@ def test_valid_signed_qr_with_valid_scanner_is_accepted():
     )
 
 
+def test_missing_scanner_identity_is_rejected_before_repository_write():
+    service, repo, scanner_auth = make_service()
+
+    with pytest.raises(
+        ValidationError,
+        match="Scanner station identity required",
+    ):
+        service.check_in(
+            EVENT_ID,
+            signed_qr(),
+            "",
+            scanner_access_token=SCANNER_TOKEN,
+        )
+
+    repo.check_in.assert_not_called()
+    scanner_auth.authenticate.assert_not_called()
+
+
 def test_missing_scanner_token_is_rejected_before_repository_write():
     service, repo, scanner_auth = make_service()
 

@@ -201,9 +201,17 @@ def test_checkin_service_maps_already_checked_in():
         GuestAlreadyCheckedInError,
         match="Guest already checked in",
     ):
-        CheckinService(repo).check_in(18, signed_qr())
+        CheckinService(
+            repo,
+            scanner_auth_service=FakeScannerAuthService(),
+        ).check_in(
+            18,
+            signed_qr(),
+            "SCANNER_001",
+            scanner_access_token="test-token",
+        )
 
-    assert repo.calls == [(18, "G1", "")]
+    assert repo.calls == [(18, "G1", "SCANNER_001")]
 
 
 def test_checkin_service_maps_guest_not_found():
@@ -218,9 +226,17 @@ def test_checkin_service_maps_guest_not_found():
         GuestNotFoundError,
         match="Guest not found",
     ):
-        CheckinService(repo).check_in(18, signed_qr())
+        CheckinService(
+            repo,
+            scanner_auth_service=FakeScannerAuthService(),
+        ).check_in(
+            18,
+            signed_qr(),
+            "SCANNER_001",
+            scanner_access_token="test-token",
+        )
 
-    assert repo.calls == [(18, "G1", "")]
+    assert repo.calls == [(18, "G1", "SCANNER_001")]
 
 
 def test_checkin_service_rejects_unexpected_repository_result():
@@ -235,7 +251,15 @@ def test_checkin_service_rejects_unexpected_repository_result():
         ValidationError,
         match="Something went wrong",
     ):
-        CheckinService(repo).check_in(18, signed_qr())
+        CheckinService(
+            repo,
+            scanner_auth_service=FakeScannerAuthService(),
+        ).check_in(
+            18,
+            signed_qr(),
+            "SCANNER_001",
+            scanner_access_token="test-token",
+        )
 
 
 def test_checkin_service_returns_repository_result_and_receipt_token():

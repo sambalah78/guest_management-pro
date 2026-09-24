@@ -153,8 +153,14 @@ class CheckinService:
         # Manual/admin check-ins intentionally do not require a scanner
         # station credential.
         #
-        if not manual and scanner_id:
+        if not manual:
+            authenticated_scanner_id = str(scanner_id or "").strip()
             scanner_token = str(scanner_access_token or "").strip()
+
+            if not authenticated_scanner_id:
+                raise ValidationError(
+                    "Scanner station identity required"
+                )
 
             if not scanner_token:
                 raise ValidationError(
@@ -171,11 +177,11 @@ class CheckinService:
                     "Invalid, inactive, or incorrectly assigned scanner station"
                 )
 
-            authenticated_scanner_id = str(
+            authenticated_station_id = str(
                 scanner.get("device_id") or ""
             ).strip()
 
-            if authenticated_scanner_id != str(scanner_id).strip():
+            if authenticated_station_id != authenticated_scanner_id:
                 raise ValidationError(
                     "Scanner station identity mismatch"
                 )
