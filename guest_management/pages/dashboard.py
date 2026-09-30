@@ -1189,16 +1189,6 @@ def dashboard() -> rx.Component:
             # ── Check if event is selected ──────────────────────────────────
             _is_event_selected(),
             email_management.email_management_panel(),
-            rx.moment(
-                interval=5000,
-                on_change=DashboardRefreshState.refresh_guests,
-                display="none",
-            ),
-            rx.moment(
-                interval=2500,
-                on_change=DashboardRefreshState.refresh_stats,
-                display="none",
-            ),
 
             width="100%",
             style={
