@@ -247,6 +247,10 @@ class GuestState(rx.State):
 
     async def load_guests(self):
         """Load one page of guests through the production repository layer."""
+        # V47 SEARCH PERSISTENCE GUARD
+        # Do not let a periodic/background refresh replace active server search results.
+        if str(self.search_query or "").strip():
+            return
         try:
 
 
@@ -482,8 +486,18 @@ class GuestState(rx.State):
         self.search_query = value.strip()
         if len(self.search_query) < 2:
             self.current_page = 1
-            async for update in self.load_guests():
-                yield update
+
+            # Only reload the normal guest page when the search is actually cleared.
+            # Do not call load_guests() for a one-character search because the
+            # resulting async request can race with the next keystroke.
+            if not self.search_query:
+                async for update in self.load_guests():
+                    yield update
+            else:
+                self.filtered_data = self.guest_data
+                self.calculate_total_pages()
+                yield
+
             return
         try:
 
@@ -521,7 +535,7 @@ class GuestState(rx.State):
                 self.search_query,
                 limit=50,
             )
-            self.guest_data = [
+            search_results = [
                 {
                     "Name": row.get("name", ""),
                     "Email": row.get("email", ""),
@@ -536,11 +550,18 @@ class GuestState(rx.State):
                 }
                 for row in rows
             ]
-            self.filtered_data = self.guest_data
+
+            self.filtered_data = search_results
             self.current_page = 1
-            self.total_pages = 1
-            self.total_guests = len(self.guest_data)
-            self.present_count = sum(1 for row in self.guest_data if row.get("Status") == "Present")
+            self.total_pages = max(
+                1,
+                (len(self.filtered_data) + self.items_per_page - 1)
+                // self.items_per_page,
+            )
+            self.total_guests = len(self.filtered_data)
+            self.present_count = sum(
+                1 for row in self.filtered_data if row.get("Status") == "Present"
+            )
             self.absent_count = self.total_guests - self.present_count
             yield
         except Exception:
@@ -1313,9 +1334,21 @@ class GuestState(rx.State):
     # DOWNLOAD / EXPORT METHODS
     # ========================================================================
 
-    def download_guest_list(self):
+    async def download_guest_list(self):
+        """Download the current event guest list after re-authorizing event access."""
         if not self.guest_data:
-            return rx.toast.error("No data to download")
+            yield rx.toast.error("No data to download")
+            return
+
+        try:
+            event_id = await self._authorize_current_event()
+        except AuthorizationError:
+            yield rx.toast.error("You are not authorized to access this event")
+            return
+        except Exception:
+            logger.exception("Unable to authorize guest-list download")
+            yield rx.toast.error("Unable to authorize guest-list download")
+            return
 
         df = pd.DataFrame(self.guest_data)
         columns_to_export = ["Name", "Email", "ID", "Table", "Status", "Email Sent"]
@@ -1328,14 +1361,26 @@ class GuestState(rx.State):
         df = df[available_cols]
         csv_data = df.to_csv(index=False)
 
-        return rx.download(
+        yield rx.download(
             data=csv_data,
-            filename=f"guest_list_event_{self.current_event_id}.csv",
+            filename=f"guest_list_event_{event_id}.csv",
         )
 
-    def export_guest_data_to_excel(self):
+    async def export_guest_data_to_excel(self):
+        """Export guest data only after re-authorizing the current event."""
         if not self.guest_data or len(self.guest_data) == 0:
-            return rx.toast.error("No guest data to export")
+            yield rx.toast.error("No guest data to export")
+            return
+
+        try:
+            event_id = await self._authorize_current_event()
+        except AuthorizationError:
+            yield rx.toast.error("You are not authorized to access this event")
+            return
+        except Exception:
+            logger.exception("Unable to authorize Excel guest export")
+            yield rx.toast.error("Unable to authorize guest export")
+            return
 
         try:
             df = pd.DataFrame(self.guest_data)
@@ -1378,14 +1423,14 @@ class GuestState(rx.State):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"guest_list_{event_name}_{timestamp}.xlsx"
 
-            return rx.download(
+            yield rx.download(
                 data=f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{encoded_data}",
                 filename=filename,
             )
 
         except Exception as e:
-            logger.error(f"Export error: {e}")
-            return rx.toast.error(f"Error exporting data: {str(e)}")
+            logger.error("Export error for event %s: %s", event_id if "event_id" in locals() else "unknown", e)
+            yield rx.toast.error(f"Error exporting data: {str(e)}")
 
     # ========================================================================
     # CLEAR TABLE
@@ -1492,19 +1537,22 @@ class GuestState(rx.State):
     # guest_management/state/guest_state.py - Complete method
 
     def set_current_event_from_url(self):
-        """Set current event ID from URL path - works for all routes."""
+        """Set current event ID from URL path after verifying event access."""
         try:
             current_path = self.router.url.path
-            logger.info(f"Setting event from URL path: {current_path}")
+            logger.info("Setting event from URL path: %s", current_path)
 
-            # Only process if we're on a route that should have an event ID
-            if "/dashboard/" not in current_path and "/scanner/" not in current_path and "/checkin/" not in current_path:
-                logger.info(f"Skipping event extraction for: {current_path}")
+            if (
+                "/dashboard/" not in current_path
+                and "/scanner/" not in current_path
+                and "/checkin/" not in current_path
+            ):
+                logger.info(
+                    "Skipping event extraction for: %s",
+                    current_path,
+                )
                 return
 
-            # Match all routes that contain an event_id
-            import re
-            # Patterns for different routes
             patterns = [
                 r"/dashboard/([^/?#]+)",
                 r"/scanner/([^/?#]+)",
@@ -1516,84 +1564,125 @@ class GuestState(rx.State):
                 r"/already_checked/([^/?#]+)",
             ]
 
+            event_id = None
             for pattern in patterns:
                 match = re.search(pattern, current_path)
                 if match:
                     event_id = match.group(1)
-                    try:
-                        int(event_id)
-                        self.current_event_id = event_id
-                        logger.info(f"Set current_event_id to: {self.current_event_id}")
+                    break
 
-                        # Try to load event details
-                        db = get_db()
-                        event_response = db.table("events") \
-                            .select("*") \
-                            .eq("id", int(event_id)) \
-                            .execute()
+            if event_id is None:
+                logger.info(
+                    "No event ID found in URL path: %s",
+                    current_path,
+                )
+                return
 
-                        if event_response.data:
-                            self.current_event = event_response.data[0]
-                            self.event_type = self.current_event.get("event_type", "company_dinner")
-                            logger.info(f"Loaded event: {self.current_event.get('name')}")
-                        return
-                    except ValueError:
-                        continue
+            try:
+                event_id_int = int(event_id)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Invalid event ID in URL path: %s",
+                    event_id,
+                )
+                return
 
-            logger.info(f"No valid event_id found in URL path: {current_path}")
+            from guest_management.services.auth_session_resolver import (
+                AuthSessionResolutionError,
+                AuthSessionResolver,
+            )
 
-        except Exception as e:
-            logger.error(f"Error setting event from URL: {e}")
+            try:
+                user = AuthSessionResolver().get_current_user()
+            except AuthSessionResolutionError:
+                logger.exception(
+                    "Unable to resolve authenticated session while "
+                    "binding GuestState event"
+                )
+                self.current_event = None
+                self.current_event_id = ""
+                return
 
-    # Add this method to GuestState class in guest_state.py
+            if not user:
+                logger.warning(
+                    "Rejected GuestState event binding without authentication: "
+                    "event_id=%s",
+                    event_id_int,
+                )
+                self.current_event = None
+                self.current_event_id = ""
+                return
 
+            user_id = str(user.get("id") or "").strip()
+            if not user_id:
+                logger.warning(
+                    "Rejected GuestState event binding with missing user ID"
+                )
+                self.current_event = None
+                self.current_event_id = ""
+                return
+
+            try:
+                event = EventService().get_event(
+                    event_id_int,
+                    user_id,
+                    user,
+                )
+            except (AuthorizationError, EventNotFoundError):
+                logger.warning(
+                    "Rejected unauthorized GuestState event binding: event_id=%s",
+                    event_id_int,
+                )
+                self.current_event = None
+                self.current_event_id = ""
+                return
+
+            self.current_event_id = str(event_id_int)
+            self.current_event = event
+            self.event_type = event.get(
+                "event_type",
+                "company_dinner",
+            )
+
+            logger.info(
+                "Authorized GuestState event binding: id=%s name=%s",
+                event_id_int,
+                event.get("name", ""),
+            )
+
+        except Exception:
+            logger.exception("Error setting authorized event from URL")
+            self.current_event = None
+            self.current_event_id = ""
     async def on_load_dashboard(self):
         """Called when dashboard page loads - sets event from URL and loads data."""
         logger.info("Dashboard on_load triggered")
 
-        # Check if we're on a dashboard route with an event ID
         current_path = self.router.url.path
-        logger.info(f"Current path: {current_path}")
+        logger.info("Current path: %s", current_path)
 
-        # Only proceed if we're on a dashboard route
         if not current_path.startswith("/dashboard/"):
-            logger.info(f"Skipping event load for non-dashboard route: {current_path}")
+            logger.info(
+                "Skipping event load for non-dashboard route: %s",
+                current_path,
+            )
             return
 
-        # Set event from URL - this will extract the ID from the path
+        # Event context must come from the authorized URL binding above.
         self.set_current_event_from_url()
 
-        # If still no event ID, try to get it from the router using regex
-        if not self.current_event_id:
-            try:
-                import re
-                match = re.search(r"/dashboard/([^/?#]+)", current_path)
-                if match:
-                    event_id = match.group(1)
-                    self.current_event_id = event_id
-                    logger.info(f"Set current_event_id from dashboard route: {self.current_event_id}")
-
-                    # Load event details
-                    db = get_db()
-                    event_response = db.table("events") \
-                        .select("*") \
-                        .eq("id", int(event_id)) \
-                        .execute()
-                    if event_response.data:
-                        self.current_event = event_response.data[0]
-                        self.event_type = self.current_event.get("event_type", "company_dinner")
-            except Exception as e:
-                logger.error(f"Error extracting event from URL: {e}")
-
-        # Load guests if we have an event
         if self.current_event_id:
-            logger.info(f"Loading guests for event: {self.current_event_id}")
+            logger.info(
+                "Loading guests for event: %s",
+                self.current_event_id,
+            )
+
             async for update in self.load_guests():
                 yield update
-
         else:
-            logger.warning("No event ID found, cannot load guests")
-
+            logger.warning(
+                "No authorized event ID found, cannot load guests"
+            )
 
 # For backward compatibility
 State = GuestState

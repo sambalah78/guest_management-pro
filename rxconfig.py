@@ -14,7 +14,6 @@ if os.path.exists(".env"):
 
 config = rx.Config(
     app_name="guest_management",
-    frontend_port=3000,
     backend_port=8000,
     api_url=os.getenv("API_URL", "http://localhost:8000"),
     show_reflex_badge=False,

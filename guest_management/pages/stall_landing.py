@@ -1,5 +1,6 @@
 # guest_management/pages/stall_landing.py
 """Stall landing page - COMPLETE FIXED VERSION."""
+from guest_management.components.loading_overlay import eventlah_viewport_page
 
 import reflex as rx
 from guest_management.state import VoucherState, GOLD, BLACK, DARK_GRAY
@@ -7,7 +8,7 @@ from guest_management.state import VoucherState, GOLD, BLACK, DARK_GRAY
 
 def stall_landing():
     """Stall landing page - shows loading state until params are loaded."""
-    return rx.center(
+    return eventlah_viewport_page(rx.center(
         rx.vstack(
             rx.cond(
                 ~VoucherState.params_loaded,
@@ -197,4 +198,7 @@ def stall_landing():
         width="100%",
         height="100vh",
         bg=BLACK,
+    ),
+        loading=VoucherState.is_loading,
+        message='Loading stall...',
     )

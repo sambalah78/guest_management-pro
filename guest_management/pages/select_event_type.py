@@ -1,4 +1,6 @@
-﻿# pages/select_event_type.py
+from guest_management.state import EventState
+from guest_management.components.loading_overlay import eventlah_viewport_page
+# pages/select_event_type.py
 
 import reflex as rx
 
@@ -103,7 +105,7 @@ def select_event_type_page():
         for event_type, config in EVENT_TYPES.items()
     ]
 
-    return rx.box(
+    return eventlah_viewport_page(rx.box(
         rx.vstack(
             # Header
             rx.hstack(
@@ -169,4 +171,7 @@ def select_event_type_page():
         min_height="100vh",
         background=BG,
         padding="12px",
+    ),
+        loading=EventState.is_loading,
+        message='Loading event types...',
     )

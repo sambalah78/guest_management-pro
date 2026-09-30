@@ -1,10 +1,12 @@
 # guest_management/pages/lucky_draw.py
 """Lucky Draw dashboard page."""
+from guest_management.components.loading_overlay import eventlah_viewport_page
 
 import reflex as rx
 
 from ..state import LuckyDrawState
 from ..utils.constants import GOLD, BLACK, DARK_GRAY, LIGHT_GRAY
+from ..components.loading_overlay import loading_overlay
 from ..components import upload_dialog
 from ..components.lucky_draw_manager import lucky_draw_manager
 
@@ -986,9 +988,11 @@ def _advanced_prize_setup():
 
 def lucky_draw_page():
     """Lucky Draw administration dashboard."""
-    return rx.box(
+    return eventlah_viewport_page(rx.box(
 
             rx.vstack(
+                loading_overlay(LuckyDrawState.is_loading, "Loading Lucky Draw..."),
+
                 # Header ------------------------------------------------------
                 rx.hstack(
                     rx.vstack(
@@ -1174,4 +1178,7 @@ def lucky_draw_page():
         min_height="100vh",
         background=BLACK,
         padding="12px",
+    ),
+        loading=False,
+        message="",
     )

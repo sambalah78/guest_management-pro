@@ -1,5 +1,7 @@
-﻿# guest_management/pages/check_in.py
+# guest_management/pages/check_in.py
 """Manual check-in page for guests without QR codes."""
+from guest_management.state import EventState
+from guest_management.components.loading_overlay import eventlah_viewport_page
 
 import reflex as rx
 from guest_management.state import  GuestState, UIState
@@ -8,7 +10,7 @@ from guest_management.utils.constants import GOLD, BLACK, DARK_GRAY
 
 def checkin_page():
     """Manual check-in page for guests without QR codes."""
-    return rx.center(
+    return eventlah_viewport_page(rx.center(
         rx.vstack(
             # Header with event info
             rx.hstack(
@@ -264,4 +266,7 @@ def checkin_page():
         min_height="100vh",
         bg=BLACK,
         padding="1em",
+    ),
+        loading=(EventState.is_loading | UIState.is_loading),
+        message='Loading check-in...',
     )

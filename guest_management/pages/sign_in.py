@@ -1,3 +1,4 @@
+from guest_management.components.loading_overlay import eventlah_viewport_page
 import reflex as rx
 
 from guest_management.state import AuthState
@@ -5,7 +6,7 @@ from guest_management.styles.theme import GOLD, BLACK, DARK_GRAY
 
 
 def login_page():
-    return rx.center(
+    return eventlah_viewport_page(rx.center(
         rx.card(
             rx.vstack(
                 rx.image(
@@ -135,4 +136,7 @@ def login_page():
         width="100%",
         min_height="80vh",
         padding="2em",
+    ),
+        loading=AuthState.is_loading,
+        message='Signing in...',
     )

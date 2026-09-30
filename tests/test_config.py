@@ -19,9 +19,6 @@ def _production_settings(**overrides):
         "supabase_url": "https://example.supabase.co",
         "supabase_anon_key": "anon-test-key",
         "supabase_secret_key": "secret-test-key",
-        "google_client_id": "google-client-id",
-        "google_client_secret": "google-client-secret",
-        "google_redirect_uri": "https://example.com/callback",
         "email_provider": "test",
         "smtp_username": "smtp-user",
         "smtp_password": "smtp-password",
@@ -133,33 +130,5 @@ def test_production_rejects_non_https_app_url():
     with pytest.raises(
         ConfigurationError,
         match="APP_URL must use HTTPS",
-    ):
-        production_settings.validate()
-
-
-def test_production_rejects_localhost_google_redirect_uri():
-    production_settings = _production_settings(
-        google_redirect_uri=(
-            "http://localhost:8000/api/auth/google/callback"
-        ),
-    )
-
-    with pytest.raises(
-        ConfigurationError,
-        match="GOOGLE_REDIRECT_URI must use HTTPS",
-    ):
-        production_settings.validate()
-
-
-def test_production_rejects_non_https_google_redirect_uri():
-    production_settings = _production_settings(
-        google_redirect_uri=(
-            "http://app.example.com/api/auth/google/callback"
-        ),
-    )
-
-    with pytest.raises(
-        ConfigurationError,
-        match="GOOGLE_REDIRECT_URI must use HTTPS",
     ):
         production_settings.validate()

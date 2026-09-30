@@ -1,3 +1,4 @@
+from guest_management.components.loading_overlay import eventlah_viewport_page
 import reflex as rx
 from guest_management.styles.theme import WHITE, GOLD, DARK_GRAY, button_style, card_style, LIGHT_GRAY
 from guest_management.pages import page_layout
@@ -5,7 +6,7 @@ from guest_management.pages import page_layout
 
 def products_page() -> rx.Component:
     """Products page showcasing automated guest check-in solutions"""
-    return page_layout(
+    return eventlah_viewport_page(page_layout(
         rx.vstack(
             # Header
             rx.center(
@@ -218,4 +219,7 @@ def products_page() -> rx.Component:
             width="100%",
             padding="0.5em",
         )
+    ),
+        loading=False,
+        message="",
     )

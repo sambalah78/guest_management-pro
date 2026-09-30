@@ -1,3 +1,4 @@
+from guest_management.components.loading_overlay import eventlah_viewport_page
 # guest_management/pages/about.py
 import reflex as rx
 from guest_management.state import GOLD, WHITE, DARK_GRAY, LIGHT_GRAY, BLACK
@@ -7,7 +8,7 @@ from guest_management.styles.theme import card_style
 
 def about_page() -> rx.Component:
     """About us page for event management company"""
-    return page_layout(
+    return eventlah_viewport_page(page_layout(
         rx.vstack(
             # Header
             rx.center(
@@ -130,4 +131,7 @@ def about_page() -> rx.Component:
             padding="0.5em",
             align="center",
         )
+    ),
+        loading=False,
+        message="",
     )

@@ -1,5 +1,8 @@
 # guest_management/utils/constants.py
+
+
 """Application constants."""
+
 
 # Colors
 # ---------------------------------------------------------------------------

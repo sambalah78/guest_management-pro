@@ -41,12 +41,6 @@ class Settings:
     smtp_password: str
     sender_email: str
 
-    # Google OAuth / Drive
-    google_client_id: str
-    google_client_secret: str
-    google_redirect_uri: str
-    google_drive_root_folder_id: str
-
     # Session configuration
     session_secret: str
     session_encryption_key: str
@@ -86,11 +80,6 @@ class Settings:
                     "SUPABASE_URL": self.supabase_url,
                     "SUPABASE_ANON_KEY": self.supabase_anon_key,
                     "SUPABASE_SECRET_KEY": self.supabase_secret_key,
-
-                    # Google
-                    "GOOGLE_CLIENT_ID": self.google_client_id,
-                    "GOOGLE_CLIENT_SECRET": self.google_client_secret,
-                    "GOOGLE_REDIRECT_URI": self.google_redirect_uri,
 
                     # Email
                     "EMAIL_PROVIDER": self.email_provider,
@@ -185,20 +174,6 @@ class Settings:
                     "in production"
                 )
 
-            redirect_uri = urlparse(self.google_redirect_uri)
-            if (
-                redirect_uri.scheme != "https"
-                or redirect_uri.hostname in {
-                    "localhost",
-                    "127.0.0.1",
-                    "::1",
-                }
-            ):
-                raise ConfigurationError(
-                    "GOOGLE_REDIRECT_URI must use HTTPS and must not point "
-                    "to localhost in production"
-                )
-
             if self.allow_legacy_qr:
                 raise ConfigurationError(
                     "ALLOW_LEGACY_QR must be false in production"
@@ -289,24 +264,6 @@ def load_settings() -> Settings:
 
         sender_email=_env(
             "SENDER_EMAIL",
-        ),
-
-        # Google OAuth / Drive
-        google_client_id=_env(
-            "GOOGLE_CLIENT_ID",
-        ),
-
-        google_client_secret=_env(
-            "GOOGLE_CLIENT_SECRET",
-        ),
-
-        google_redirect_uri=_env(
-            "GOOGLE_REDIRECT_URI",
-            "http://localhost:8000/api/auth/google/callback",
-        ),
-
-        google_drive_root_folder_id=_env(
-            "GOOGLE_DRIVE_ROOT_FOLDER_ID",
         ),
 
         # Session

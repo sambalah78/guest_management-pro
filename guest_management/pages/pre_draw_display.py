@@ -5,7 +5,9 @@ import re
 import reflex as rx
 
 from ..state.lucky_draw_state import LuckyDrawState
-from ..utils.constants import GOLD, BLACK, DARK_GRAY, LIGHT_GRAY
+from ..utils.constants import (GOLD, BLACK, DARK_GRAY, LIGHT_GRAY)
+from guest_management.utils.formatting import presentation_page_layout
+from guest_management.components.loading_overlay import loading_overlay
 
 
 def _participant_card(guest):
@@ -172,7 +174,14 @@ def _legend():
 def pre_draw_display_page():
     """Fullscreen presentation of persisted Pre-Draw winners."""
 
-    return rx.box(
+    return presentation_page_layout(rx.box(
+        loading_overlay(LuckyDrawState.is_loading, "Loading Pre-Draw Display..."),
+        rx.button(
+            "",
+            id="eventlah-predraw-auto-next",
+            on_click=LuckyDrawState.predraw_next_page,
+            display="none",
+        ),
         rx.vstack(
             # Header
             rx.hstack(
@@ -199,12 +208,18 @@ def pre_draw_display_page():
                         color=GOLD,
                         font_size=["0.8em", "0.95em"],
                         font_weight="800",
-                        letter_spacing="0.12em",
+                        letter_spacing="0.2em",
                     ),
                     spacing="1",
-                    align="start",
+                    align="center",
                 ),
-                rx.spacer(),
+                rx.spacer(),rx.text(
+                    "Please look for your name below. "
+                    "These guests have already been selected as Pre-Draw winners.",
+                    color=LIGHT_GRAY,
+                    font_size=["0.78em", "0.9em", "1em"],
+                    text_align="center",
+                ),
                 rx.vstack(
                     rx.text(
                         LuckyDrawState.pre_draw_winner_count,
@@ -222,22 +237,11 @@ def pre_draw_display_page():
                 ),
                 width="100%",
                 align="center",
+
             ),
 
             # Description
-            rx.box(
-                rx.text(
-                    "Please look for your name below. "
-                    "These guests have already been selected as Pre-Draw winners.",
-                    color=LIGHT_GRAY,
-                    font_size=["0.78em", "0.9em", "1em"],
-                    text_align="center",
-                ),
-                background=DARK_GRAY,
-                border_radius="10px",
-                padding="0.8em 1em",
-                width="100%",
-            ),
+
 
             # Participant list
             rx.box(
@@ -316,6 +320,11 @@ def pre_draw_display_page():
             spacing="4",
             width="100%",
             max_width="1800px",
+            style={
+                "height": "100%",
+                "minHeight": "100vh",
+                "padding": "0.5em",
+            },
             padding=["1em", "1.5em", "2em"],
 
         ),
@@ -323,4 +332,40 @@ def pre_draw_display_page():
         min_height="100vh",
         width="100%",
         color="white",
-    )
+        on_mount=rx.call_script(
+            """
+            (() => {
+                const key = "eventlah-predraw-rotation";
+
+                // Prevent duplicate timers after Reflex remounts.
+                if (window[key]) {
+                    clearInterval(window[key]);
+                }
+
+                const rotate = () => {
+                    const button = document.getElementById(
+                        "eventlah-predraw-auto-next"
+                    );
+
+                    if (button) {
+                        button.click();
+                    }
+                };
+
+                window[key] = window.setInterval(rotate, 10000);
+            })();
+            """
+        ),
+        on_unmount=rx.call_script(
+            """
+            (() => {
+                const key = "eventlah-predraw-rotation";
+
+                if (window[key]) {
+                    clearInterval(window[key]);
+                    window[key] = null;
+                }
+            })();
+            """
+        ),
+    ))

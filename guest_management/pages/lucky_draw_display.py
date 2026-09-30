@@ -27,6 +27,7 @@ import reflex as rx
 
 from ..state.lucky_draw_state import LuckyDrawState
 from ..utils.constants import GOLD, BLACK, DARK_GRAY, LIGHT_GRAY
+from ..components.loading_overlay import loading_overlay
 
 
 # ============================================================================
@@ -997,6 +998,7 @@ def lucky_draw_display_page():
     """
     return rx.box(
         _wheel_styles(),
+        loading_overlay(LuckyDrawState.is_loading, "Loading Lucky Draw Display...") ,
         rx.vstack(
             _event_header(),
 

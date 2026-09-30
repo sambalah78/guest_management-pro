@@ -1,0 +1,48 @@
+# Git / IDE
+.git
+.idea
+
+# Python local environments / caches
+.venv
+venv
+ENV
+__pycache__
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Reflex local/generated state
+.web
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+db.sqlite3
+reflex.db
+
+# Local environment files / secrets
+.env
+.env.production
+guest_management/secrets
+secrets
+
+# Tests and historical archives
+tests
+_archive
+alembic/versions_archive
+
+# Temporary / backup artifacts
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+*.tmp
+*.temp
+*.search_backup
+*.before-*.py
+
+# Local development helper
+run_eventlah_dev.ps1

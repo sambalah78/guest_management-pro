@@ -218,7 +218,7 @@ def test_pre_draw_pagination_27_winners_creates_two_pages():
     assert state.predraw_visible_participants[0]["guest_id"] == "G027"
 
 
-def test_pre_draw_pagination_does_not_move_past_last_page():
+def test_pre_draw_pagination_wraps_from_last_page_to_first_page():
     state = LuckyDrawState()
     state.pre_draw_winners = [
         make_winner(f"G{i:03d}", f"Guest {i}")
@@ -231,8 +231,11 @@ def test_pre_draw_pagination_does_not_move_past_last_page():
 
     state.predraw_next_page()
 
-    assert state.predraw_page == 1
-    assert state.predraw_is_last_page is True
+    # The public Pre-Draw display now cycles continuously.
+    # The last page wraps back to the first page.
+    assert state.predraw_page == 0
+    # After wrapping to page 0, the display is no longer on the last page.
+    assert state.predraw_is_last_page is False
 
 
 def test_pre_draw_previous_page_does_not_move_before_first_page():

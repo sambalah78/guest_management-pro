@@ -180,6 +180,8 @@ class EventState(rx.State):
 
     async def load_events(self):
         """Load events through EventService, scoped to the authenticated user."""
+        self.is_loading = True
+        yield
         try:
             from guest_management.state.auth_state import AuthState
             auth = await self.get_state(AuthState)

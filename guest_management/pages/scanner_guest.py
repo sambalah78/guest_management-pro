@@ -1,3 +1,4 @@
+from guest_management.components.loading_overlay import eventlah_viewport_page
 # guest_management/pages/scanner_guest.py
 import reflex as rx
 from guest_management.state import EventState, ScannerState
@@ -5,328 +6,368 @@ from guest_management.utils.constants import GOLD, BLACK, DARK_GRAY, LIGHT_GRAY
 
 
 def scanner_guest_page() -> rx.Component:
-    """Multi-scanner workstation layout supporting 5-8 USB scanners."""
-    return rx.center(
+    """Scanner-only guest check-in workstation. No admin controls."""
+    return eventlah_viewport_page(rx.center(
         rx.vstack(
-            # Top Window Bar
             rx.hstack(
+                rx.vstack(
+                    rx.text(
+                        "SCANNER WORKSTATION",
+                        size="2",
+                        color=GOLD,
+                        weight="bold",
+                        letter_spacing="0.12em",
+                    ),
+                    rx.cond(
+                        EventState.current_event,
+                        rx.text(
+                            EventState.current_event.get(
+                                "name",
+                                "Event Check-In",
+                            ),
+                            size="4",
+                            color="white",
+                            weight="bold",
+                        ),
+                        rx.text(
+                            "Event Check-In",
+                            size="4",
+                            color="white",
+                            weight="bold",
+                        ),
+                    ),
+                    spacing="0",
+                    align="start",
+                ),
                 rx.spacer(),
                 rx.button(
                     rx.hstack(
-                        rx.icon(tag="x", size=18, color="white"),
-                        rx.text("Close Window", size="1", color="white", weight="bold"),
+                        rx.icon(tag="x", size=16),
+                        rx.text("Close", size="1"),
                         spacing="1",
                     ),
-                    on_click=rx.call_script("window.close();"),
-                    bg="#FF4444",
-                    color="white",
-                    padding="0.3em 0.8em",
-                    border_radius="8px",
+                    on_click=ScannerState.close_scanner_workstation,
+                    variant="ghost",
+                    color="gray",
+                    size="1",
                 ),
                 width="100%",
-                padding="0.5em 1em",
+                align="center",
             ),
 
-            # Header
-            rx.vstack(
-                rx.heading(
-                    rx.cond(
-                        EventState.current_event,
-                        EventState.current_event.get("name", "Event Check-In"),
-                        "Event Check-In"
-                    ),
-                    size="5",
-                    color=GOLD,
-                    text_align="center",
-                ),
-                rx.text(
-                    "Scanner Check-In Workstation",
-                    color=LIGHT_GRAY,
-                    size="2",
-                    text_align="center",
-                ),
-                spacing="1",
-                width="100%",
-            ),
-
-            rx.divider(margin_y="0.3em", size="4", color_scheme="gold"),
-            # Scanner Station Authentication
-            rx.cond(
-                ~ScannerState.station_authenticated,
-                rx.card(
-                    rx.vstack(
-                        rx.heading(
-                            "Scanner Station Login",
-                            size="4",
-                            color=GOLD,
-                            text_align="center",
-                        ),
-
-                        rx.text(
-                            "Authenticate this workstation before starting check-in.",
-                            size="2",
-                            color=LIGHT_GRAY,
-                            text_align="center",
-                        ),
-
-                        rx.input(
-                            placeholder="Scanner station access token",
-                            type="password",
-                            value=ScannerState.station_access_token,
-                            on_change=ScannerState.set_station_access_token,
-                            width="100%",
-                            size="3",
-                        ),
-
-                        rx.button(
-                            rx.text(
-                                "AUTHENTICATE STATION",
-                                weight="bold",
-                            ),
-                            on_click=ScannerState.authenticate_station,
-                            bg=GOLD,
-                            color=BLACK,
-                            width="100%",
-                            height="50px",
-                            border_radius="25px",
-                        ),
-
-                        rx.cond(
-                            ScannerState.station_authenticating,
-                            rx.text(
-                                "Authenticating...",
-                                size="2",
-                                color=GOLD,
-                            ),
-                        ),
-
-                        rx.cond(
-                            ScannerState.station_auth_error != "",
-                            rx.text(
-                                ScannerState.station_auth_error,
-                                size="2",
-                                color="red",
-                                text_align="center",
-                            ),
-                        ),
-
-                        spacing="3",
-                        width="100%",
-                    ),
-                    bg=DARK_GRAY,
-                    border=f"2px solid {GOLD}",
-                    border_radius="20px",
-                    padding="2em",
-                    width="100%",
-                    max_width="500px",
-                ),
-            ),
-            rx.cond(
-                ScannerState.station_authenticated,
-                rx.card(
+            rx.card(
+                rx.hstack(
+                    rx.icon(tag="badge-check", size=20, color="green"),
                     rx.vstack(
                         rx.text(
                             "AUTHENTICATED STATION",
-                            size="2",
+                            size="1",
                             color="green",
                             weight="bold",
                         ),
                         rx.text(
                             ScannerState.current_scanner_name,
-                            size="4",
-                            color=GOLD,
+                            size="3",
+                            color="white",
                             weight="bold",
                         ),
                         rx.text(
                             ScannerState.current_scanner_id,
                             size="1",
                             color="gray",
-                            font_family="monospace",
+                            style={"fontFamily": "monospace"},
                         ),
-                        spacing="1",
-                        align="center",
+                        spacing="0",
+                        align="start",
                     ),
-                    bg=DARK_GRAY,
-                    border="1px solid rgba(255,255,255,0.15)",
-                    border_radius="12px",
-                    padding="1em",
+                    spacing="2",
                     width="100%",
-                    max_width="500px",
+                    align="center",
                 ),
+                bg=DARK_GRAY,
+                border="1px solid rgba(34,197,94,0.35)",
+                border_radius="14px",
+                padding="0.9em 1em",
+                width="100%",
             ),
 
-            # Status Card
             rx.card(
                 rx.vstack(
                     rx.cond(
                         ScannerState.scanner_status_icon == "success",
                         rx.vstack(
-                            rx.icon(tag="circle_check", size=70, color="green"),
-                            rx.text("CHECK-IN SUCCESSFUL!", size="4", weight="bold", color="green"),
-                            rx.text(f"Welcome, {ScannerState.checkin_guest_name}!", size="3", color="white", weight="medium"),
-                            rx.text("Table:", size="2", color="gray", margin_top="1em"),
+                            rx.icon(tag="circle-check", size=68, color="green"),
+                            rx.text(
+                                "CHECK-IN SUCCESSFUL",
+                                size="4",
+                                color="green",
+                                weight="bold",
+                                text_align="center",
+                            ),
+                            rx.text(
+                                ScannerState.checkin_guest_name,
+                                size="4",
+                                color="white",
+                                weight="bold",
+                                text_align="center",
+                            ),
+                            rx.text(
+                                "TABLE",
+                                size="1",
+                                color="gray",
+                                weight="bold",
+                                letter_spacing="0.15em",
+                            ),
                             rx.text(
                                 ScannerState.checkin_table_number,
-                                font_size=["4em", "5em"],
+                                font_size="clamp(3rem, 10vw, 5rem)",
                                 color=GOLD,
                                 weight="bold",
                                 font_family="monospace",
+                                text_align="center",
+                                line_height="1",
                             ),
                             rx.cond(
                                 ScannerState.checkin_team_name,
-                                rx.text(f"Team: {ScannerState.checkin_team_name}", size="2", color=GOLD),
+                                rx.text(
+                                    f"Team: {ScannerState.checkin_team_name}",
+                                    size="2",
+                                    color=GOLD,
+                                ),
+                                rx.fragment(),
                             ),
                             spacing="2",
                             align="center",
                         ),
                         rx.cond(
-                            ScannerState.scanner_status_icon == "error",
+                            ScannerState.scanner_status_icon == "warning",
                             rx.vstack(
-                                rx.icon(tag="circle_x", size=70, color="red"),
-                                rx.text("CHECK-IN FAILURE", size="4", weight="bold", color="red"),
-                                rx.text(ScannerState.scanner_status, size="2", color="white", text_align="center"),
-                                rx.text("Please see registration desk for assistance.", size="2", color="gray", margin_top="1em"),
-                                spacing="2",
-                                align="center",
-                            ),
-                            # IDLE STATE
-                            rx.vstack(
-                                rx.icon(tag="qr_code", size=70, color=GOLD),
-                                rx.cond(
-                                    ScannerState.scanner_ready,
-                                    rx.vstack(
-                                        rx.text("SCANNERS ACTIVE", size="4", weight="bold", color="green"),
-                                        rx.text("Ready for QR codes from the connected scanner", color="gray", size="2"),
-                                        spacing="1",
-                                        align="center",
-                                    ),
-                                    rx.vstack(
-                                        rx.text("SCANNERS STANDBY", size="4", weight="bold", color="gray"),
-                                        rx.text("Click START to activate this scanner workstation", color="gray", size="2"),
-                                        spacing="1",
-                                        align="center",
-                                    ),
+                                rx.icon(
+                                    tag="triangle-alert",
+                                    size=68,
+                                    color="orange",
+                                ),
+                                rx.text(
+                                    "ALREADY CHECKED IN",
+                                    size="4",
+                                    color="orange",
+                                    weight="bold",
+                                    text_align="center",
+                                ),
+                                rx.text(
+                                    ScannerState.scanner_status,
+                                    size="2",
+                                    color="white",
+                                    text_align="center",
                                 ),
                                 spacing="2",
                                 align="center",
+                            ),
+                            rx.cond(
+                                ScannerState.scanner_status_icon == "error",
+                                rx.vstack(
+                                    rx.icon(
+                                        tag="circle-x",
+                                        size=68,
+                                        color="red",
+                                    ),
+                                    rx.text(
+                                        "CHECK-IN FAILED",
+                                        size="4",
+                                        color="red",
+                                        weight="bold",
+                                    ),
+                                    rx.text(
+                                        ScannerState.scanner_status,
+                                        size="2",
+                                        color="white",
+                                        text_align="center",
+                                    ),
+                                    spacing="2",
+                                    align="center",
+                                ),
+                                rx.vstack(
+                                    rx.icon(
+                                        tag="qr-code",
+                                        size=68,
+                                        color=GOLD,
+                                    ),
+                                    rx.cond(
+                                        ScannerState.scanner_ready,
+                                        rx.vstack(
+                                            rx.text(
+                                                "READY TO SCAN",
+                                                size="4",
+                                                color="green",
+                                                weight="bold",
+                                            ),
+                                            rx.text(
+                                                "Present the guest QR code to the connected scanner.",
+                                                size="2",
+                                                color="gray",
+                                                text_align="center",
+                                            ),
+                                            spacing="1",
+                                            align="center",
+                                        ),
+                                        rx.vstack(
+                                            rx.text(
+                                                "SCANNER STANDBY",
+                                                size="4",
+                                                color="gray",
+                                                weight="bold",
+                                            ),
+                                            rx.text(
+                                                "Press START SCAN to activate the scanner.",
+                                                size="2",
+                                                color="gray",
+                                                text_align="center",
+                                            ),
+                                            spacing="1",
+                                            align="center",
+                                        ),
+                                    ),
+                                    spacing="2",
+                                    align="center",
+                                ),
                             ),
                         ),
                     ),
                     spacing="3",
                     align="center",
+                    width="100%",
                 ),
                 bg=DARK_GRAY,
                 border=f"2px solid {GOLD}",
-                border_radius="20px",
-                padding="2.5em",
+                border_radius="18px",
+                padding="2em 1.5em",
                 width="100%",
-                max_width="500px",
             ),
 
-            # Control Buttons
-            rx.vstack(
-                rx.cond(
-                    (~ScannerState.scanner_ready) & (ScannerState.scanner_status_icon != "success") & (ScannerState.scanner_status_icon != "error"),
-                    rx.button(
-                        rx.hstack(
-                            rx.icon(tag="play", size=24),
-                            rx.text("START SCANNER", size="4", weight="bold"),
-                            spacing="2",
-                        ),
-                        on_click=ScannerState.enable_guest_scanner,
-                        bg=GOLD,
-                        color=BLACK,
-                        width="100%",
-                        height="60px",
-                        border_radius="30px",
-                        _hover={"bg": "#C9A82C"},
+            rx.cond(
+                (~ScannerState.scanner_ready)
+                & (ScannerState.scanner_status_icon == "idle"),
+                rx.button(
+                    rx.hstack(
+                        rx.icon(tag="play", size=22),
+                        rx.text("START SCAN", size="3", weight="bold"),
+                        spacing="2",
                     ),
+                    on_click=ScannerState.enable_guest_scanner,
+                    bg=GOLD,
+                    color=BLACK,
+                    width="100%",
+                    height="58px",
+                    border_radius="30px",
+                    is_disabled=~ScannerState.station_authenticated,
                 ),
-                rx.cond(
-                    ScannerState.scanner_ready & (ScannerState.scanner_status_icon != "success") & (ScannerState.scanner_status_icon != "error"),
-                    rx.vstack(
-                        rx.hstack(
-                            rx.icon(tag="activity", size=18, color="green"),
-                            rx.text("Scanner workstation active", size="2", color="green"),
-                            spacing="2",
+                rx.fragment(),
+            ),
+
+            rx.cond(
+                ScannerState.scanner_ready,
+                rx.hstack(
+                    rx.hstack(
+                        rx.icon(tag="activity", size=18, color="green"),
+                        rx.text(
+                            "Scanner active",
+                            size="2",
+                            color="green",
+                            weight="bold",
                         ),
-                        rx.hstack(
-                            rx.button(
-                                rx.hstack(
-                                    rx.icon(tag="pause", size=20),
-                                    rx.text("Pause", size="3"),
-                                    spacing="2",
-                                ),
-                                on_click=ScannerState.disable_guest_scanner,
-                                variant="outline",
-                                border_color="red",
-                                color="red",
-                                width="50%",
-                                border_radius="30px",
-                                height="50px",
-                                _hover={"bg": "rgba(255,0,0,0.1)"},
-                            ),
-                            rx.button(
-                                rx.hstack(
-                                    rx.icon(tag="layout_dashboard", size=20),
-                                    rx.text("Dashboard", size="3"),
-                                    spacing="2",
-                                ),
-                                on_click=ScannerState.close_scanner_and_go_to_dashboard,
-                                bg="#333333",
-                                color="white",
-                                width="50%",
-                                border_radius="30px",
-                                height="50px",
-                                _hover={"bg": "#444444"},
-                            ),
-                            spacing="3",
+                        spacing="1",
+                    ),
+                    rx.spacer(),
+                    rx.button(
+                        "Pause",
+                        on_click=ScannerState.disable_guest_scanner,
+                        variant="outline",
+                        color="red",
+                        border_color="red",
+                        size="1",
+                    ),
+                    width="100%",
+                    align="center",
+                ),
+                rx.fragment(),
+            ),
+
+            rx.card(
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon(tag="keyboard", size=18, color=GOLD),
+                        rx.text(
+                            "Manual Check-In",
+                            size="2",
+                            color="white",
+                            weight="bold",
+                        ),
+                        spacing="2",
+                    ),
+                    rx.text(
+                        "Enter the guest ID if the QR code cannot be scanned.",
+                        size="1",
+                        color="gray",
+                    ),
+                    rx.hstack(
+                        rx.input(
+                            placeholder="Guest ID",
+                            value=ScannerState.scanner_manual_guest_id,
+                            on_change=ScannerState.set_scanner_manual_guest_id,
                             width="100%",
+                            size="3",
+                            bg=BLACK,
+                            color="white",
+                            border_color=GOLD,
+                        ),
+                        rx.button(
+                            "Check In",
+                            on_click=ScannerState.handle_manual_checkin(
+                                ScannerState.scanner_manual_guest_id
+                            ),
+                            bg=GOLD,
+                            color=BLACK,
+                            height="46px",
+                            min_width="120px",
+                            border_radius="23px",
                         ),
                         spacing="2",
                         width="100%",
-                        align="center",
                     ),
                 ),
-                rx.cond(
-                    (ScannerState.scanner_status_icon == "success") | (ScannerState.scanner_status_icon == "error"),
-                    rx.hstack(
-                        rx.button(
-                            rx.hstack(
-                                rx.icon(tag="refresh_cw", size=20),
-                                rx.text("Next Guest", size="3", weight="bold"),
-                                spacing="2",
-                            ),
-                            on_click=ScannerState.reset_scanner_for_next_guest,
-                            bg=GOLD,
-                            color=BLACK,
-                            width="50%",
-                            height="55px",
-                            border_radius="30px",
-                            _hover={"bg": "#C9A82C"},
-                        ),
-                        rx.button(
-                            rx.hstack(
-                                rx.icon(tag="layout_dashboard", size=20),
-                                rx.text("Dashboard", size="3", weight="bold"),
-                                spacing="2",
-                            ),
-                            on_click=ScannerState.close_scanner_and_go_to_dashboard,
-                            bg="#333333",
-                            color="white",
-                            width="50%",
-                            height="55px",
-                            border_radius="30px",
-                            _hover={"bg": "#444444"},
-                        ),
-                        spacing="3",
-                        width="100%",
-                    ),
-                ),
+                bg="#111111",
+                border="1px solid #333333",
+                border_radius="14px",
+                padding="1em",
                 width="100%",
             ),
 
-            # Hidden bridge input - CRITICAL for scanner communication
+            rx.cond(
+                (
+                    (ScannerState.scanner_status_icon == "success")
+                    | (ScannerState.scanner_status_icon == "warning")
+                    | (ScannerState.scanner_status_icon == "error")
+                ),
+                rx.button(
+                    rx.hstack(
+                        rx.icon(tag="refresh-cw", size=19),
+                        rx.text(
+                            "SCAN NEXT GUEST",
+                            size="2",
+                            weight="bold",
+                        ),
+                        spacing="2",
+                    ),
+                    on_click=ScannerState.reset_scanner_for_next_guest,
+                    bg=GOLD,
+                    color=BLACK,
+                    width="100%",
+                    height="54px",
+                    border_radius="28px",
+                ),
+                rx.fragment(),
+            ),
+
             rx.box(
                 rx.input(
                     on_change=ScannerState.handle_high_volume_scan,
@@ -334,17 +375,27 @@ def scanner_guest_page() -> rx.Component:
                     id="scanner-bridge-input",
                 ),
                 class_name="reflex-scan-bridge",
-                style={"position": "absolute", "left": "-9999px", "opacity": "0"}
+                style={
+                    "position": "absolute",
+                    "left": "-9999px",
+                    "opacity": "0",
+                    "width": "1px",
+                    "height": "1px",
+                },
             ),
 
-            spacing="4",
+            spacing="3",
             width="100%",
-            max_width="600px",
-            padding="1.5em",
+            max_width="620px",
+            padding="1em",
             align="center",
         ),
         rx.script(src="/js/usb_scanner.js"),
         width="100vw",
-        height="100vh",
+        min_height="100vh",
         bg=BLACK,
+        padding="0.5em",
+    ),
+        loading=ScannerState.is_loading,
+        message='Loading scanner...',
     )

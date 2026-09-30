@@ -28,17 +28,15 @@ db.sqlite3
 media/
 staticfiles/
 .static/
-# Google credentials
+# Application secrets
 guest_management/secrets/
 *.json
-# Google credentials
+# Application secrets
 secrets/*.json
 
 # OAuth tokens
 guest_management/secrets/token*.json
-# Google Drive OAuth credentials
-guest_management/secrets/eventlah-drive-oauth-client.json
-guest_management/secrets/eventlah-drive-token.json
+# Legacy secret-file paths
 
-# Google service account credentials
+# Secret-file paths
 guest_management/secrets/*.json

@@ -195,6 +195,7 @@ scanner_devices = _table(
     ),
     Column("assigned_at", DateTime(timezone=True)),
     Column("access_token_hash", Text),
+    Column("pin_ciphertext", Text),
     Column(
         "created_at",
         DateTime(timezone=True),
@@ -439,6 +440,24 @@ def init_db() -> None:
     if _initialized:
         return
     metadata.create_all(engine)
+
+    # EVENTLAH_PIN_CIPHERTEXT_SCHEMA_COMPAT
+    # metadata.create_all() does not add columns to existing databases.
+    # Ensure older local/prod databases receive the encrypted scanner PIN column.
+    with engine.begin() as conn:
+        inspector = __import__("sqlalchemy").inspect(conn)
+        existing_columns = {
+            str(column.get("name") or "")
+            for column in inspector.get_columns("scanner_devices")
+        }
+
+        if "pin_ciphertext" not in existing_columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE scanner_devices "
+                    "ADD COLUMN pin_ciphertext TEXT"
+                )
+            )
     with engine.begin() as conn:
         # SQLite does not enforce foreign keys by default.
         if conn.dialect.name == "sqlite":

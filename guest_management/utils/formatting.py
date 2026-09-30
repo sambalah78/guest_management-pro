@@ -12,6 +12,40 @@ DISPLAY_DATE_FORMAT = "%d-%b-%Y"
 DISPLAY_TIME_FORMAT = "%H:%M"
 DISPLAY_DATETIME_FORMAT = "%d-%b-%Y %H:%M"
 
+from guest_management.components import footer
+import reflex as rx
+
+def page_layout(content: rx.Component) -> rx.Component:
+    """Wraps pages to perfectly fit any screen without scrolling."""
+    return rx.box(
+
+        rx.box(
+            content,
+            width="100%",
+            flex="1",
+            padding="1.5rem",
+            overflow_y="auto",  # Allow scrolling within content area
+        ),
+        footer.footer(),
+        background="radial-gradient(circle, #1a1a1a 0%, #0a0a0a 100%)",
+        width="100vw",
+        height="100vh",
+        display="flex",
+        flex_direction="column",
+        overflow="hidden",
+    )
+
+
+def presentation_page_layout(content: rx.Component) -> rx.Component:
+    """Viewport-locked layout for event-day audience displays."""
+    return rx.box(
+        content,
+        width="100vw",
+        height="100dvh",
+        min_height="100dvh",
+        overflow="hidden",
+        background="radial-gradient(circle, #1a1a1a 0%, #0a0a0a 100%)",
+    )
 def _parse_datetime(value: Any) -> datetime_type | None:
     """Parse common PostgreSQL/ISO datetime representations."""
     if value is None or value == "":

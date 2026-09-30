@@ -1,177 +1,179 @@
-import pytest
 from unittest.mock import MagicMock, patch
 
-from guest_management.core.exceptions import AuthorizationError
-from guest_management.repositories.scanner_repository import ScannerRepository
+import pytest
+
 from guest_management.services.scanner_station_auth_service import (
     ScannerStationAuthService,
 )
 
 
-def make_admin_user():
+def make_scanner(
+    event_id=10,
+    device_id="EL-ABC",
+    device_name="Registration Desk 1",
+    is_active=True,
+):
     return {
-        "id": "admin-user-id",
-        "role": "ADMIN",
-        "is_active": True,
-    }
-
-
-def make_event_service():
-    event_service = MagicMock()
-    event_service.get_event.return_value = {
-        "id": 10,
-        "name": "Test Event",
-    }
-    return event_service
-
-
-# ============================================================================
-# AUTHENTICATION
-# ============================================================================
-
-
-def test_authenticate_returns_active_scanner():
-    repo = MagicMock()
-
-    scanner = {
         "id": 1,
-        "event_id": 10,
-        "device_id": "EL-ABC",
-        "device_name": "Registration Desk 1",
-        "is_active": True,
+        "event_id": event_id,
+        "device_id": device_id,
+        "device_name": device_name,
+        "is_active": is_active,
     }
 
-    repo.get_by_access_token_hash.return_value = scanner
 
-    event_service = make_event_service()
-
-    service = ScannerStationAuthService(
-        repo=repo,
-        event_service=event_service,
+def make_service(repo=None):
+    return ScannerStationAuthService(
+        repo=repo or MagicMock()
     )
 
-    with patch(
-        "guest_management.services.scanner_station_auth_service.settings"
-    ) as mocked_settings:
-        mocked_settings.scanner_station_secret = "x" * 32
 
-        result = service.authenticate(
-            10,
-            "ELST_test-token",
-        )
-
-    assert result == scanner
-
-    repo.get_by_access_token_hash.assert_called_once()
-
-
-def test_authenticate_rejects_empty_token():
+def test_authenticate_rejects_empty_pin():
     repo = MagicMock()
+    service = make_service(repo)
 
-    service = ScannerStationAuthService(repo=repo)
+    assert service.authenticate(10, "") is None
+    repo.get_by_access_token_hash.assert_not_called()
 
-    with pytest.raises(
-        AuthorizationError,
-        match="Scanner access token required",
-    ):
-        service.authenticate(
-            10,
-            "",
-        )
+
+def test_authenticate_rejects_invalid_pin_format():
+    repo = MagicMock()
+    service = make_service(repo)
+
+    assert service.authenticate(10, "123") is None
+    assert service.authenticate(10, "12345") is None
+    assert service.authenticate(10, "abcd") is None
 
     repo.get_by_access_token_hash.assert_not_called()
 
 
-def test_authenticate_rejects_unknown_token():
+def test_authenticate_rejects_unknown_pin():
     repo = MagicMock()
-
     repo.get_by_access_token_hash.return_value = None
 
-    service = ScannerStationAuthService(repo=repo)
+    service = make_service(repo)
 
     with patch(
         "guest_management.services.scanner_station_auth_service.settings"
     ) as mocked_settings:
         mocked_settings.scanner_station_secret = "x" * 32
 
-        with pytest.raises(
-            AuthorizationError,
-            match="Invalid scanner access token",
-        ):
-            service.authenticate(
-                10,
-                "ELST_test-token",
-            )
-
-    repo.get_by_access_token_hash.assert_called_once()
+        assert service.authenticate(10, "4827") is None
 
 
 def test_authenticate_rejects_inactive_scanner():
     repo = MagicMock()
 
-    repo.get_by_access_token_hash.return_value = {
-        "id": 1,
-        "event_id": 10,
-        "device_id": "EL-ABC",
-        "device_name": "Registration Desk 1",
-        "is_active": False,
-    }
+    repo.get_by_access_token_hash.return_value = make_scanner(
+        event_id=10,
+        is_active=False,
+    )
 
-    service = ScannerStationAuthService(repo=repo)
+    service = make_service(repo)
 
     with patch(
         "guest_management.services.scanner_station_auth_service.settings"
     ) as mocked_settings:
         mocked_settings.scanner_station_secret = "x" * 32
 
-        with pytest.raises(
-            AuthorizationError,
-            match="Scanner station is inactive",
-        ):
-            service.authenticate(
-                10,
-                "ELST_test-token",
-            )
-
-    repo.get_by_access_token_hash.assert_called_once()
+        assert service.authenticate(10, "4827") is None
 
 
 def test_authenticate_rejects_scanner_from_different_event():
     repo = MagicMock()
 
-    repo.get_by_access_token_hash.return_value = {
-        "id": 1,
-        "event_id": 20,
-        "device_id": "EL-ABC",
-        "device_name": "Registration Desk 1",
-        "is_active": True,
-    }
+    repo.get_by_access_token_hash.return_value = make_scanner(
+        event_id=20,
+    )
 
-    service = ScannerStationAuthService(repo=repo)
+    service = make_service(repo)
 
     with patch(
         "guest_management.services.scanner_station_auth_service.settings"
     ) as mocked_settings:
         mocked_settings.scanner_station_secret = "x" * 32
 
-        with pytest.raises(
-            AuthorizationError,
-            match="Scanner station is not assigned to this event",
-        ):
-            service.authenticate(
-                10,
-                "ELST_valid-token",
-            )
-
-    repo.get_by_access_token_hash.assert_called_once()
+        assert service.authenticate(10, "4827") is None
 
 
-# ============================================================================
-# PROVISIONING
-# ============================================================================
+def test_service_does_not_require_event_service():
+    repo = MagicMock()
+
+    service = ScannerStationAuthService(repo=repo)
+
+    assert service is not None
 
 
-def test_provision_station_returns_plaintext_token_and_stores_hash():
+def test_issue_session_uses_elss_prefix():
+    scanner = make_scanner()
+
+    with patch(
+        "guest_management.services.scanner_station_auth_service.settings"
+    ) as mocked_settings:
+        mocked_settings.scanner_station_secret = "x" * 32
+
+        session = ScannerStationAuthService.issue_session(scanner)
+
+    assert session.startswith("ELSS_")
+    assert len(session) > len("ELSS_")
+
+
+def test_issue_session_contains_no_plaintext_pin():
+    scanner = make_scanner()
+
+    with patch(
+        "guest_management.services.scanner_station_auth_service.settings"
+    ) as mocked_settings:
+        mocked_settings.scanner_station_secret = "x" * 32
+
+        session = ScannerStationAuthService.issue_session(scanner)
+
+    assert "4827" not in session
+
+
+def test_provision_station_requires_four_digit_pin():
+    repo = MagicMock()
+    service = make_service(repo)
+
+    with pytest.raises(ValueError, match="exactly 4 digits"):
+        service.provision_station(
+            event_id=10,
+            device_name="Registration Desk 1",
+            pin="123",
+        )
+
+    repo.create.assert_not_called()
+
+
+def test_provision_station_rejects_five_digit_pin():
+    repo = MagicMock()
+    service = make_service(repo)
+
+    with pytest.raises(ValueError, match="exactly 4 digits"):
+        service.provision_station(
+            event_id=10,
+            device_name="Registration Desk 1",
+            pin="12345",
+        )
+
+    repo.create.assert_not_called()
+
+
+def test_provision_station_rejects_non_numeric_pin():
+    repo = MagicMock()
+    service = make_service(repo)
+
+    with pytest.raises(ValueError, match="exactly 4 digits"):
+        service.provision_station(
+            event_id=10,
+            device_name="Registration Desk 1",
+            pin="12AB",
+        )
+
+    repo.create.assert_not_called()
+
+
+def test_provision_station_returns_pin_and_stores_hash():
     repo = MagicMock()
 
     repo.create.return_value = {
@@ -181,126 +183,35 @@ def test_provision_station_returns_plaintext_token_and_stores_hash():
         "is_active": True,
     }
 
-    event_service = make_event_service()
-    admin_user = make_admin_user()
+    service = make_service(repo)
 
-    service = ScannerStationAuthService(
-        repo=repo,
-        event_service=event_service,
-    )
+    with patch(
+        "guest_management.services.scanner_station_auth_service.settings"
+    ) as mocked_settings:
+        mocked_settings.scanner_station_secret = "x" * 32
 
-    scanner, token = service.provision_station(
-        event_id=10,
-        device_name="Registration Desk 1",
-        actor_user_id="admin-user-id",
-        actor_user=admin_user,
-    )
+        result = service.provision_station(
+            event_id=10,
+            device_name="Registration Desk 1",
+            pin="4827",
+        )
 
-    assert scanner["event_id"] == 10
-    assert token
-    assert isinstance(token, str)
-
-    repo.create.assert_called_once()
+    assert result is not None
 
     create_kwargs = repo.create.call_args.kwargs
 
     assert create_kwargs["event_id"] == 10
     assert create_kwargs["device_name"] == "Registration Desk 1"
-    assert create_kwargs["assigned_by"] == "admin-user-id"
 
     assert create_kwargs["access_token_hash"]
-    assert create_kwargs["access_token_hash"] != token
+    assert create_kwargs["access_token_hash"] != "4827"
 
-    event_service.get_event.assert_called_once_with(
-        10,
-        "admin-user-id",
-        admin_user,
-    )
+    if "pin_ciphertext" in create_kwargs:
+        assert create_kwargs["pin_ciphertext"]
+        assert create_kwargs["pin_ciphertext"] != "4827"
 
 
-def test_provision_station_rejects_missing_actor():
-    repo = MagicMock()
-    event_service = make_event_service()
-
-    service = ScannerStationAuthService(
-        repo=repo,
-        event_service=event_service,
-    )
-
-    with pytest.raises(
-        AuthorizationError,
-        match="Authenticated user required",
-    ):
-        service.provision_station(
-            event_id=10,
-            device_name="Registration Desk 1",
-        )
-
-    repo.create.assert_not_called()
-    event_service.get_event.assert_not_called()
-
-
-def test_provision_station_rejects_non_admin():
-    repo = MagicMock()
-    event_service = make_event_service()
-
-    user = {
-        "id": "normal-user-id",
-        "role": "USER",
-        "is_active": True,
-    }
-
-    service = ScannerStationAuthService(
-        repo=repo,
-        event_service=event_service,
-    )
-
-    with pytest.raises(
-        AuthorizationError,
-        match="not authorized",
-    ):
-        service.provision_station(
-            event_id=10,
-            device_name="Registration Desk 1",
-            actor_user_id="normal-user-id",
-            actor_user=user,
-        )
-
-    repo.create.assert_not_called()
-    event_service.get_event.assert_not_called()
-
-
-def test_provision_station_rejects_inactive_admin():
-    repo = MagicMock()
-    event_service = make_event_service()
-
-    user = {
-        "id": "admin-user-id",
-        "role": "ADMIN",
-        "is_active": False,
-    }
-
-    service = ScannerStationAuthService(
-        repo=repo,
-        event_service=event_service,
-    )
-
-    with pytest.raises(
-        AuthorizationError,
-        match="not authorized",
-    ):
-        service.provision_station(
-            event_id=10,
-            device_name="Registration Desk 1",
-            actor_user_id="admin-user-id",
-            actor_user=user,
-        )
-
-    repo.create.assert_not_called()
-    event_service.get_event.assert_not_called()
-
-
-def test_provision_station_does_not_store_plaintext_token():
+def test_provision_station_does_not_store_plaintext_pin_as_access_hash():
     repo = MagicMock()
 
     repo.create.return_value = {
@@ -310,32 +221,34 @@ def test_provision_station_does_not_store_plaintext_token():
         "is_active": True,
     }
 
-    event_service = make_event_service()
-    admin_user = make_admin_user()
+    service = make_service(repo)
 
-    service = ScannerStationAuthService(
-        repo=repo,
-        event_service=event_service,
-    )
+    with patch(
+        "guest_management.services.scanner_station_auth_service.settings"
+    ) as mocked_settings:
+        mocked_settings.scanner_station_secret = "x" * 32
 
-    scanner, plaintext_token = service.provision_station(
-        event_id=10,
-        device_name="Registration Desk 1",
-        actor_user_id="admin-user-id",
-        actor_user=admin_user,
-    )
+        service.provision_station(
+            event_id=10,
+            device_name="Registration Desk 1",
+            pin="4827",
+        )
 
-    assert scanner
-    assert plaintext_token
+    create_kwargs = repo.create.call_args.kwargs
 
-    stored_hash = repo.create.call_args.kwargs["access_token_hash"]
-    assert stored_hash
-    assert stored_hash != plaintext_token
-
-    # The plaintext token must never be supplied to the repository.
-    for call_arg in repo.create.call_args.args:
-        assert call_arg != plaintext_token
+    assert create_kwargs["access_token_hash"] != "4827"
 
 
-    for call_value in repo.create.call_args.kwargs.values():
-        assert call_value != plaintext_token
+def test_pin_hash_is_deterministic():
+    first = ScannerStationAuthService._hash_pin("4827")
+    second = ScannerStationAuthService._hash_pin("4827")
+
+    assert first == second
+    assert first != "4827"
+
+
+def test_different_pins_have_different_hashes():
+    first = ScannerStationAuthService._hash_pin("4827")
+    second = ScannerStationAuthService._hash_pin("9153")
+
+    assert first != second

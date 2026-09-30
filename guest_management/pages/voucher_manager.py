@@ -1,3 +1,5 @@
+from guest_management.state import AuthState
+from guest_management.components.loading_overlay import eventlah_viewport_page
 # guest_management/pages/voucher_manager.py
 from typing import Any
 
@@ -125,7 +127,7 @@ def show_stall_qr_dialog() -> rx.Component:
 
 def voucher_manager_page() -> rx.Component:
     """Voucher manager page with conditional display."""
-    return rx.cond(
+    return eventlah_viewport_page(rx.cond(
         VoucherState.has_amounts,
         rx.center(
             rx.vstack(
@@ -384,4 +386,7 @@ def voucher_manager_page() -> rx.Component:
             height="100vh",
             bg=BLACK,
         ),
+    ),
+        loading=(VoucherState.is_loading | AuthState.is_loading),
+        message='Loading vouchers...',
     )
