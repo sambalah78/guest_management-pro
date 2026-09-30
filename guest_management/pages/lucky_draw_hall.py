@@ -206,7 +206,7 @@ html, body, #__next {
 #eventlah-hall-root {
   width: 100vw;
   height: 100dvh;
-  min-height: 100dvh;
+  min-height: 0;
   overflow: hidden;
   background: #000;
   color: #fff;
@@ -337,10 +337,8 @@ html, body, #__next {
 }
 
 .hall-wheel {
-  width: min(43vw, 52dvh, 640px);
-  height: min(43vw, 52dvh, 640px);
-  min-width: 190px;
-  min-height: 190px;
+  width: min(43vw, 52dvh, 640px); height: min(43vw, 52dvh, 640px);
+  min-width: 0; min-height: 0;
   max-width: 100%;
   max-height: 100%;
   border-radius: 50%;
@@ -621,6 +619,87 @@ html, body, #__next {
   .hall-done-history {
     max-height: 100%;
   }
+}
+
+/* EVENTLAH_RESPONSIVE_HALL_V2 */
+
+html,
+body,
+#__next {
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+}
+
+#eventlah-hall-root {
+    width: 100vw;
+    height: 100dvh;
+    min-height: 0;
+    max-height: 100dvh;
+    overflow: hidden !important;
+}
+
+.hall-shell {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    overflow: hidden;
+}
+
+.hall-main {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.hall-stage {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.hall-wheel {
+    width: min(43vw, 52dvh, 640px);
+    height: min(43vw, 52dvh, 640px);
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.hall-wheel-name {
+    font-size: clamp(20px, 3.2vw, 58px);
+}
+
+.hall-winner-name {
+    font-size: clamp(26px, 4vw, 70px);
+}
+
+.history-row {
+    font-size: clamp(12px, 1.15vw, 24px);
+    line-height: 1.15;
+}
+
+@media (max-height: 800px) {
+    .hall-wheel {
+        width: min(42vw, 46dvh, 560px);
+        height: min(42vw, 46dvh, 560px);
+    }
+
+    .history-row {
+        font-size: clamp(11px, 1vw, 19px);
+    }
+}
+
+@media (max-height: 650px) {
+    .hall-wheel {
+        width: min(40vw, 42dvh, 480px);
+        height: min(40vw, 42dvh, 480px);
+    }
+
+    .history-row {
+        font-size: 11px;
+    }
 }
 </style>
 """

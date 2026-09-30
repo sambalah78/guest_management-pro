@@ -122,10 +122,10 @@ def _wheel_styles():
         }
         .eventlah-name-wheel {
             position: relative;
-            width: min(76vw, 520px);
-            height: min(76vw, 520px);
-            min-width: 360px;
-            min-height: 360px;
+            width: min(48vw, 58dvh, 560px);
+            height: min(48vw, 58dvh, 560px);
+            min-width: 0;
+            min-height: 0;
             border-radius: 50%;
             border: 8px solid #D4AF37;
             background: radial-gradient(circle, #151515 0 42%, #0b0b0b 43% 100%);
@@ -181,7 +181,7 @@ def _wheel_styles():
             align-items: center;
             justify-content: center;
             width: 100%;
-            min-height: 570px;
+            min-height: 0;
             padding-top: 30px;
         }
         .eventlah-spinning-caption {
@@ -267,13 +267,13 @@ def _winner_card():
             justify="center",
             padding=["1.5em", "2em", "2.5em"],
             width="100%",
-            min_height=["360px", "430px", "500px"],
+            min_height="0",
         ),
         background="#707070",
         border=f"1px solid {GOLD}",
         border_radius="18px",
         width="100%",
-        min_height=["360px", "430px", "500px"],
+        min_height="0",
         display="flex",
         align_items="center",
         justify_content="center",
@@ -925,7 +925,69 @@ def lucky_draw_external_display_page():
       @keyframes extWheelSpin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
       @keyframes extPulse { 0%,100%{opacity:.65} 50%{opacity:1} }
       @media (max-width:900px) { .ext-content { grid-template-columns:1fr; } .ext-prize-panel,.ext-live-panel { min-height:auto; } .ext-prize-image { height:35vh; } .ext-wheel { width:min(78vw,500px); height:min(78vw,500px); } }
-    </style>
+
+        /* EVENTLAH_RESPONSIVE_UI_V2 */
+
+        html,
+        body,
+        #__next {
+            width: 100%;
+            height: 100%;
+            min-height: 100%;
+            margin: 0;
+            overflow: hidden !important;
+        }
+
+        body {
+            overscroll-behavior: none;
+        }
+
+        .eventlah-display-root {
+            width: 100vw;
+            height: 100dvh;
+            min-height: 0;
+            max-height: 100dvh;
+            overflow: hidden;
+        }
+
+        .eventlah-display-root * {
+            box-sizing: border-box;
+        }
+
+        .eventlah-display-root h1,
+        .eventlah-display-root h2,
+        .eventlah-display-root h3 {
+            max-width: 100%;
+        }
+
+        .eventlah-responsive-text {
+            font-size: clamp(12px, 1.2vw, 24px);
+        }
+
+        .eventlah-responsive-heading {
+            font-size: clamp(20px, 2.8vw, 52px);
+            line-height: 1.05;
+        }
+
+        .eventlah-responsive-display {
+            font-size: clamp(28px, 4vw, 72px);
+            line-height: 1;
+        }
+
+        @media (max-height: 800px) {
+            .eventlah-name-wheel {
+                width: min(44vw, 48dvh, 480px);
+                height: min(44vw, 48dvh, 480px);
+            }
+        }
+
+        @media (max-height: 650px) {
+            .eventlah-name-wheel {
+                width: min(40vw, 43dvh, 400px);
+                height: min(40vw, 43dvh, 400px);
+            }
+        }
+</style>
     """
 
     return rx.box(

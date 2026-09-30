@@ -705,14 +705,19 @@ def _guest_table() -> rx.Component:
                                         ),
                                         rx.box(),
                                     ),
-                                    rx.tooltip(
-                                        rx.button(
-                                            rx.icon(tag="history", size=12),
-                                            on_click=lambda: VoucherState.show_guest_history(guest),
-                                            variant="ghost",
-                                            _hover={"bg": f"{GOLD}33"},
+                                    # Purchase history is a Sports Day / voucher feature only.
+                                    rx.cond(
+                                        EventState.show_food_vouchers,
+                                        rx.tooltip(
+                                            rx.button(
+                                                rx.icon(tag="history", size=12),
+                                                on_click=lambda: VoucherState.show_guest_history(guest),
+                                                variant="ghost",
+                                                _hover={"bg": f"{GOLD}33"},
+                                            ),
+                                            content="View purchase history",
                                         ),
-                                        content="View purchase history",
+                                        rx.fragment(),
                                     ),
                                     # Voucher button - only for Sports Day events with amount > 0
                                     rx.cond(

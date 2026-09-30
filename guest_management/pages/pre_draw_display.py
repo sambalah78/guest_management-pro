@@ -170,7 +170,6 @@ def _legend():
         wrap="wrap",
     )
 
-
 def pre_draw_display_page():
     """Fullscreen presentation of persisted Pre-Draw winners."""
 
@@ -322,14 +321,14 @@ def pre_draw_display_page():
             max_width="1800px",
             style={
                 "height": "100%",
-                "minHeight": "100vh",
+                "minHeight": "0",
                 "padding": "0.5em",
             },
             padding=["1em", "1.5em", "2em"],
 
         ),
         background=BLACK,
-        min_height="100vh",
+        min_height="0",
         width="100%",
         color="white",
         on_mount=rx.call_script(
