@@ -1,3 +1,4 @@
+from guest_management.components.loading_overlay import eventlah_viewport_page
 # pages/events.py
 import reflex as rx
 from guest_management.state import State, AuthState, EventState
@@ -7,7 +8,7 @@ from guest_management.styles.theme import button_style, GOLD, BLACK , LIGHT_GRAY
 
 def events_page():
     """Events page showing all user events."""
-    return rx.center(
+    return eventlah_viewport_page(rx.center(
         rx.vstack(
             # Header
             rx.hstack(
@@ -70,4 +71,7 @@ def events_page():
         min_height="100vh",
         bg=BLACK,
         padding="1em",
+    ),
+        loading=EventState.is_loading,
+        message='Loading events...',
     )

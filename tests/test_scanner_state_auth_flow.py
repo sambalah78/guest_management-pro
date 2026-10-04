@@ -41,7 +41,7 @@ def make_state():
     state.is_loading = False
     state.current_event_id = "18"
     state.current_scanner_id = "SCANNER_001"
-    state.station_access_token = "ELST_test-secret"
+    state.station_session_token = "ELSS_test-session"
     state.station_authenticated = True
     state.scanner_status = ""
     state.scanner_status_icon = "idle"
@@ -79,7 +79,7 @@ def test_process_checkin_forwards_authenticated_station_token(monkeypatch):
             "event_id": 18,
             "raw_scan": "signed-qr",
             "scanner_id": "SCANNER_001",
-            "scanner_access_token": "ELST_test-secret",
+            "scanner_access_token": "ELSS_test-session",
             "manual": False,
         }
     ]

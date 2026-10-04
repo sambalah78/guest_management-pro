@@ -1,11 +1,37 @@
+from guest_management.components.loading_overlay import eventlah_viewport_page
 # guest_management/pages/dashboard.py
 import reflex as rx
+
+# Scanner PIN recovery uses ScannerState.reveal_scanner_pin(...) internally via toggle_scanner_pin.
 
 from guest_management.pages import page_layout_dashboard
 from guest_management.state import State, ScannerState, LuckyDrawState, EventState, UIState, EmailState, AuthState, \
     VoucherState, GuestState
 
 from guest_management.utils.constants import GOLD, BLACK, DARK_GRAY, LIGHT_GRAY
+from guest_management.components.loading_overlay import loading_overlay
+class DashboardRefreshState(rx.State):
+    """Periodic refresh controller for the admin dashboard."""
+
+    async def refresh_guests(self, _value: str = ""):
+        """Refresh visible guest data without losing an active search."""
+        guest_state = await self.get_state(GuestState)
+        search_query = str(guest_state.search_query or "").strip()
+
+        # Do not let the periodic guest refresh overwrite an active search.
+        # Dashboard statistics continue through refresh_stats() independently.
+        if search_query:
+            return
+
+        async for update in guest_state.load_guests():
+            yield update
+
+    async def refresh_stats(self, _value: str = ""):
+        """Refresh dashboard counters only."""
+        guest_state = await self.get_state(GuestState)
+        async for update in guest_state.update_dashboard_stats():
+            yield update
+
 from guest_management.components.stat_card import stat_card
 from guest_management.components import (
     upload_dialog,
@@ -41,7 +67,11 @@ def _scanner_station_panel() -> rx.Component:
             rx.vstack(
                 rx.hstack(
                     rx.vstack(
-                        rx.heading("Scanner Stations", size="5", color="white"),
+                        rx.heading(
+                            "Scanner Stations",
+                            size="5",
+                            color="white",
+                        ),
                         rx.text(
                             "Manage the physical QR scanner workstations for this event.",
                             color="gray",
@@ -65,27 +95,62 @@ def _scanner_station_panel() -> rx.Component:
                 ),
 
                 rx.box(
-                    rx.hstack(
-                        rx.icon(tag="info", size=16, color=GOLD),
-                        rx.vstack(
-                            rx.text(
-                                "Each workstation uses its own station credential.",
-                                color="white",
-                                weight="bold",
-                                size="2",
+                    rx.vstack(
+                        rx.hstack(
+                            rx.icon(tag="info", size=16, color=GOLD),
+                            rx.vstack(
+                                rx.text(
+                                    "Each workstation uses its own 4-digit PIN and temporary browser session.",
+                                    color="white",
+                                    weight="bold",
+                                    size="2",
+                                ),
+                                rx.text(
+                                    "Keep the PIN with the event team. It is not for guests.",
+                                    color="gray",
+                                    size="1",
+                                ),
+                                spacing="0",
+                                align="start",
                             ),
-                            rx.text(
-                                "Never share a station token with another scanner.",
-                                color="gray",
-                                size="1",
-                            ),
-                            spacing="0",
+                            spacing="2",
                             align="start",
                         ),
+                        rx.hstack(
+                            rx.text(
+                                "Scanner login:",
+                                color="gray",
+                                size="1",
+                                weight="bold",
+                            ),
+                            rx.text(
+                                ScannerState.scanner_login_url,
+                                color=GOLD,
+                                size="1",
+                                style={
+                                    "fontFamily": "monospace",
+                                    "overflowWrap": "anywhere",
+                                },
+                                flex="1",
+                            ),
+                            rx.button(
+                                rx.hstack(
+                                    rx.icon(tag="copy", size=13),
+                                    rx.text("Copy Link"),
+                                    spacing="1",
+                                ),
+                                on_click=ScannerState.copy_scanner_login_link,
+                                size="1",
+                                variant="soft",
+                                color_scheme="gold",
+                            ),
+                            spacing="2",
+                            width="100%",
+                            align="center",
+                        ),
                         spacing="2",
-                        align="start",
                     ),
-                    padding="0.8em",
+                    padding="0.9em",
                     border=f"1px solid {GOLD}44",
                     border_radius="10px",
                     background=f"{GOLD}0D",
@@ -94,7 +159,11 @@ def _scanner_station_panel() -> rx.Component:
 
                 rx.vstack(
                     rx.hstack(
-                        rx.heading("Registered Stations", size="3", color="white"),
+                        rx.heading(
+                            "Registered Stations",
+                            size="3",
+                            color="white",
+                        ),
                         rx.spacer(),
                         rx.badge(
                             f"{ScannerState.scanner_devices.length().to_string()} stations",
@@ -104,108 +173,217 @@ def _scanner_station_panel() -> rx.Component:
                         width="100%",
                         align="center",
                     ),
-
                     rx.cond(
                         ScannerState.scanner_devices.length() > 0,
                         rx.vstack(
                             rx.foreach(
                                 ScannerState.scanner_devices,
                                 lambda scanner: rx.box(
-                                    rx.hstack(
-                                        rx.box(
-                                            rx.icon(
-                                                tag="scan-line",
-                                                size=18,
-                                                color=rx.cond(
+                                    rx.vstack(
+                                        rx.hstack(
+                                            rx.box(
+                                                rx.icon(
+                                                    tag="scan-line",
+                                                    size=18,
+                                                    color=rx.cond(
+                                                        scanner.get("is_active", False),
+                                                        "green",
+                                                        "gray",
+                                                    ),
+                                                ),
+                                                width="36px",
+                                                height="36px",
+                                                display="flex",
+                                                align_items="center",
+                                                justify_content="center",
+                                                border_radius="8px",
+                                                background=rx.cond(
+                                                    scanner.get("is_active", False),
+                                                    "#22c55e18",
+                                                    "#ffffff0A",
+                                                ),
+                                            ),
+                                            rx.vstack(
+                                                rx.text(
+                                                    scanner.get(
+                                                        "device_name",
+                                                        "Scanner Station",
+                                                    ),
+                                                    color="white",
+                                                    weight="bold",
+                                                    size="2",
+                                                ),
+                                                rx.text(
+                                                    scanner.get("device_id", ""),
+                                                    color="gray",
+                                                    size="1",
+                                                    style={"fontFamily": "monospace"},
+                                                ),
+                                                spacing="0",
+                                                align="start",
+                                                min_width="0",
+                                                flex="1",
+                                            ),
+                                            rx.badge(
+                                                rx.cond(
+                                                    scanner.get("is_active", False),
+                                                    "ACTIVE",
+                                                    "INACTIVE",
+                                                ),
+                                                color_scheme=rx.cond(
                                                     scanner.get("is_active", False),
                                                     "green",
                                                     "gray",
                                                 ),
-                                            ),
-                                            width="36px",
-                                            height="36px",
-                                            display="flex",
-                                            align_items="center",
-                                            justify_content="center",
-                                            border_radius="8px",
-                                            background=rx.cond(
-                                                scanner.get("is_active", False),
-                                                "#22c55e18",
-                                                "#ffffff0A",
-                                            ),
-                                        ),
-                                        rx.vstack(
-                                            rx.text(
-                                                scanner.get("device_name", "Scanner Station"),
-                                                color="white",
-                                                weight="bold",
-                                                size="2",
-                                            ),
-                                            rx.text(
-                                                scanner.get("device_id", ""),
-                                                color="gray",
+                                                variant="soft",
                                                 size="1",
-                                                style={"fontFamily": "monospace"},
                                             ),
-                                            spacing="0",
-                                            align="start",
-                                            min_width="0",
+                                            width="100%",
+                                            align="center",
+                                            spacing="2",
                                         ),
-                                        rx.spacer(),
-                                        rx.badge(
+
+                                        rx.hstack(
+                                            rx.cond(
+                                                (
+                                                    ScannerState.scanner_pin_recovery_visible
+                                                )
+                                                & (
+                                                    ScannerState.scanner_pin_recovery_device_id
+                                                    == scanner.get(
+                                                        "device_id",
+                                                        "",
+                                                    )
+                                                ),
+                                                rx.button(
+                                                    "Hide PIN",
+                                                    on_click=ScannerState.hide_scanner_pin,
+                                                    size="1",
+                                                    variant="soft",
+                                                    color_scheme="gold",
+                                                ),
+                                                rx.button(
+                                                    "View PIN",
+                                                    on_click=ScannerState.toggle_scanner_pin(scanner["device_id"]),
+                                                    size="1",
+                                                    variant="soft",
+                                                    color_scheme="gold",
+                                                ),
+                                            ),
+                                            rx.button(
+                                                "Open Login",
+                                                on_click=ScannerState.open_scanner_login,
+                                                size="1",
+                                                variant="soft",
+                                                color_scheme="blue",
+                                            ),
                                             rx.cond(
                                                 scanner.get("is_active", False),
-                                                "ACTIVE",
-                                                "INACTIVE",
+                                                rx.button(
+                                                    "Deactivate",
+                                                    on_click=ScannerState.deactivate_scanner(scanner["device_id"]),
+                                                    size="1",
+                                                    variant="soft",
+                                                    color_scheme="orange",
+                                                ),
+                                                rx.button(
+                                                    "Activate",
+                                                    on_click=ScannerState.activate_scanner(scanner["device_id"]),
+                                                    size="1",
+                                                    variant="soft",
+                                                    color_scheme="green",
+                                                ),
                                             ),
-                                            color_scheme=rx.cond(
-                                                scanner.get("is_active", False),
-                                                "green",
-                                                "gray",
+                                            rx.button(
+                                                rx.hstack(
+                                                    rx.icon(tag="trash-2", size=13),
+                                                    rx.text("Remove Station"),
+                                                    spacing="1",
+                                                ),
+                                                on_click=ScannerState.remove_scanner(scanner["device_id"]),
+                                                size="1",
+                                                variant="soft",
+                                                color_scheme="red",
                                             ),
-                                            variant="soft",
-                                            size="1",
+                                            spacing="2",
+                                            wrap="wrap",
+                                            width="100%",
+                                            justify="end",
                                         ),
+
                                         rx.cond(
-                                            scanner.get("is_active", False),
-                                            rx.button(
-                                                "Deactivate",
-                                                on_click=lambda: ScannerState.deactivate_scanner(
-                                                    str(scanner.get("device_id", ""))
-                                                ),
-                                                size="1",
-                                                variant="soft",
-                                                color_scheme="orange",
+                                            (
+                                                ScannerState.scanner_pin_recovery_visible
+                                            )
+                                            & (
+                                                ScannerState.scanner_pin_recovery_device_id
+                                                == scanner.get(
+                                                    "device_id",
+                                                    "",
+                                                )
                                             ),
-                                            rx.button(
-                                                "Activate",
-                                                on_click=lambda: ScannerState.activate_scanner(
-                                                    str(scanner.get("device_id", ""))
+                                            rx.box(
+                                                rx.vstack(
+                                                    rx.text(
+                                                        "SCANNER PIN",
+                                                        color="gray",
+                                                        size="1",
+                                                        weight="bold",
+                                                    ),
+                                                    rx.hstack(
+                                                        rx.text(
+                                                            ScannerState.scanner_pin_recovery_name,
+                                                            color="white",
+                                                            weight="bold",
+                                                            size="2",
+                                                        ),
+                                                        rx.spacer(),
+                                                        rx.text(
+                                                            ScannerState.scanner_pin_recovery_value,
+                                                            color=GOLD,
+                                                            weight="bold",
+                                                            size="5",
+                                                            style={
+                                                                "fontFamily": "monospace",
+                                                                "letterSpacing": "0.15em",
+                                                            },
+                                                        ),
+                                                        width="100%",
+                                                        align="center",
+                                                    ),
+                                                    spacing="1",
                                                 ),
-                                                size="1",
-                                                variant="soft",
-                                                color_scheme="green",
+                                                padding="0.75em 0.9em",
+                                                border=f"1px solid {GOLD}66",
+                                                border_radius="10px",
+                                                background=f"{GOLD}0A",
+                                                width="100%",
                                             ),
+                                            rx.fragment(),
                                         ),
-                                        spacing="3",
+                                        spacing="2",
                                         width="100%",
-                                        align="center",
                                     ),
-                                    padding="0.75em",
+                                    padding="0.85em",
                                     border=f"1px solid {DARK_GRAY}",
                                     border_radius="10px",
                                     width="100%",
+                                    background="#00000018",
                                 ),
                             ),
                             spacing="2",
                             width="100%",
-                            max_height="260px",
+                            max_height="310px",
                             overflow_y="auto",
                         ),
                         rx.box(
                             rx.vstack(
                                 rx.icon(tag="scan-line", size=28, color="gray"),
-                                rx.text("No scanner stations registered", color="gray", size="2"),
+                                rx.text(
+                                    "No scanner stations registered",
+                                    color="gray",
+                                    size="2",
+                                ),
                                 rx.text(
                                     "Provision your first scanner below.",
                                     color="gray",
@@ -227,9 +405,13 @@ def _scanner_station_panel() -> rx.Component:
                 rx.divider(),
 
                 rx.vstack(
-                    rx.heading("Provision New Scanner", size="3", color="white"),
+                    rx.heading(
+                        "Provision New Scanner",
+                        size="3",
+                        color="white",
+                    ),
                     rx.text(
-                        "Give the physical scanner a clear name, such as “Main Entrance” or “Registration Desk”.",
+                        "Set a station name and unique 4-digit PIN. Admins can recover the PIN later.",
                         color="gray",
                         size="1",
                     ),
@@ -242,119 +424,76 @@ def _scanner_station_panel() -> rx.Component:
                         color="white",
                         border_color=GOLD,
                     ),
-                    rx.button(
-                        rx.hstack(
-                            rx.cond(
-                                ScannerState.scanner_provisioning,
-                                rx.spinner(size="1"),
-                                rx.icon(tag="plus", size=14),
-                            ),
-                            rx.text(
+                    rx.input(
+                        placeholder="4-digit scanner PIN",
+                        type="password",
+                        max_length=4,
+                        input_mode="numeric",
+                        value=ScannerState.new_scanner_pin,
+                        on_change=ScannerState.set_new_scanner_pin,
+                        width="100%",
+                        bg=BLACK,
+                        color="white",
+                        border_color=GOLD,
+                    ),
+                    rx.hstack(
+                        rx.button(
+                            rx.hstack(
                                 rx.cond(
                                     ScannerState.scanner_provisioning,
-                                    "Provisioning…",
-                                    "Provision Scanner",
-                                )
+                                    rx.spinner(size="1"),
+                                    rx.icon(tag="plus", size=14),
+                                ),
+                                rx.text(
+                                    rx.cond(
+                                        ScannerState.scanner_provisioning,
+                                        "Provisioning…",
+                                        "Provision Scanner",
+                                    )
+                                ),
+                                spacing="2",
                             ),
-                            spacing="2",
+                            on_click=ScannerState.provision_scanner,
+                            is_disabled=ScannerState.scanner_provisioning,
+                            bg=GOLD,
+                            color=BLACK,
+                            width="50%",
                         ),
-                        on_click=ScannerState.provision_scanner,
-                        is_disabled=ScannerState.scanner_provisioning,
-                        bg=GOLD,
-                        color=BLACK,
+                        rx.button(
+                            rx.hstack(
+                                rx.icon(tag="external-link", size=14),
+                                rx.text("Open Scanner Login"),
+                                spacing="2",
+                            ),
+                            on_click=ScannerState.open_scanner_login,
+                            variant="soft",
+                            color_scheme="gold",
+                            width="50%",
+                        ),
+                        spacing="2",
                         width="100%",
-                        _hover={"opacity": "0.88"},
+                    ),
+                    rx.cond(
+                        ScannerState.scanner_provision_error != "",
+                        rx.callout(
+                            ScannerState.scanner_provision_error,
+                            icon="triangle_alert",
+                            color_scheme="red",
+                            size="1",
+                        ),
+                        rx.fragment(),
                     ),
                     spacing="2",
                     width="100%",
                     align="start",
                 ),
 
-                rx.cond(
-                    ScannerState.new_scanner_token != "",
-                    rx.box(
-                        rx.vstack(
-                            rx.hstack(
-                                rx.icon(tag="shield-check", size=18, color="green"),
-                                rx.text(
-                                    "Scanner credential created",
-                                    color="white",
-                                    weight="bold",
-                                    size="3",
-                                ),
-                                spacing="2",
-                            ),
-                            rx.box(
-                                rx.text(
-                                    "SAVE THIS TOKEN NOW — IT CANNOT BE RECOVERED LATER.",
-                                    color=GOLD,
-                                    weight="bold",
-                                    size="1",
-                                ),
-                                padding="0.65em",
-                                border=f"1px solid {GOLD}66",
-                                border_radius="8px",
-                                background=f"{GOLD}10",
-                                width="100%",
-                            ),
-                            rx.vstack(
-                                rx.text("Device ID", color="gray", size="1"),
-                                rx.text(
-                                    ScannerState.new_scanner_device_id,
-                                    color="white",
-                                    size="2",
-                                    style={"fontFamily": "monospace"},
-                                ),
-                                rx.text("Station Token", color="gray", size="1"),
-                                rx.code(
-                                    ScannerState.new_scanner_token,
-                                    width="100%",
-                                    style={
-                                        "display": "block",
-                                        "whiteSpace": "normal",
-                                        "wordBreak": "break-all",
-                                        "fontSize": "0.75rem",
-                                    },
-                                ),
-                                spacing="1",
-                                align="start",
-                                width="100%",
-                            ),
-                            rx.text(
-                                "Enter this token on the scanner workstation. For security, EventLah never stores the plaintext token.",
-                                color="gray",
-                                size="1",
-                            ),
-                            spacing="3",
-                            align="start",
-                            width="100%",
-                        ),
-                        padding="1em",
-                        border="1px solid #22c55e55",
-                        border_radius="12px",
-                        background="#22c55e0D",
-                        width="100%",
-                    ),
-                    rx.fragment(),
-                ),
-
-                rx.cond(
-                    ScannerState.scanner_provision_error != "",
-                    rx.callout(
-                        ScannerState.scanner_provision_error,
-                        icon="triangle_alert",
-                        color_scheme="red",
-                        size="1",
-                    ),
-                    rx.fragment(),
-                ),
-
                 spacing="4",
                 width="100%",
                 align="stretch",
             ),
-            max_width="680px",
-            width="calc(100vw - 2em)",
+            max_width="760px",
+            width="calc(100vw - 1.5em)",
             background=DARK_GRAY,
             border=f"1px solid {GOLD}55",
             padding="1.2em",
@@ -362,7 +501,6 @@ def _scanner_station_panel() -> rx.Component:
         open=ScannerState.scanner_management_open,
         on_open_change=ScannerState.set_scanner_management_open,
     )
-
 
 def render_cell(col: str, guest: dict):
     """Render a table cell with column-aware styling."""
@@ -567,14 +705,19 @@ def _guest_table() -> rx.Component:
                                         ),
                                         rx.box(),
                                     ),
-                                    rx.tooltip(
-                                        rx.button(
-                                            rx.icon(tag="history", size=12),
-                                            on_click=lambda: VoucherState.show_guest_history(guest),
-                                            variant="ghost",
-                                            _hover={"bg": f"{GOLD}33"},
+                                    # Purchase history is a Sports Day / voucher feature only.
+                                    rx.cond(
+                                        EventState.show_food_vouchers,
+                                        rx.tooltip(
+                                            rx.button(
+                                                rx.icon(tag="history", size=12),
+                                                on_click=lambda: VoucherState.show_guest_history(guest),
+                                                variant="ghost",
+                                                _hover={"bg": f"{GOLD}33"},
+                                            ),
+                                            content="View purchase history",
                                         ),
-                                        content="View purchase history",
+                                        rx.fragment(),
                                     ),
                                     # Voucher button - only for Sports Day events with amount > 0
                                     rx.cond(
@@ -922,7 +1065,9 @@ def _dashboard_content() -> rx.Component:
         # ── Search ────────────────────────────────────────────────────────
         rx.input(
             placeholder="🔎  Search guests…",
-            on_change=State.search_guests,
+            value=State.search_query,
+            on_change=State.set_search_query,
+            on_blur=State.search_guests,
             size="1",
             width="100%",
             bg=BLACK,
@@ -1039,8 +1184,10 @@ def _dashboard_content() -> rx.Component:
 
 def dashboard() -> rx.Component:
     """Main dashboard page."""
-    return page_layout_dashboard(
+    return eventlah_viewport_page(page_layout_dashboard(
         rx.vstack(
+            loading_overlay(GuestState.is_loading | EmailState.email_management_loading, "Loading Dashboard..."),
+
             # ── Live alert banner ──────────────────────────────────────────────
             _checkin_alert_banner(),
 
@@ -1054,7 +1201,8 @@ def dashboard() -> rx.Component:
                 "minHeight": "100vh",
                 "padding": "0.5em",
             },
-            # Load guests when page mounts
-            on_mount=State.load_guests,
         ),
+    ),
+        loading=False,
+        message='',
     )

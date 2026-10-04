@@ -31,7 +31,7 @@ REQUIRED_TABLES = {
 
 
 def main() -> int:
-    load_dotenv()
+    load_dotenv(os.getenv("EVENTLAH_ENV_FILE", ".env"), override=True)
 
     database_url = os.getenv("DATABASE_URL", "").strip()
 
@@ -39,7 +39,7 @@ def main() -> int:
         print("FAIL: DATABASE_URL is not configured.")
         return 1
 
-    if not database_url.startswith(("postgresql://", "postgres://")):
+    if not database_url.startswith(("postgresql://", "postgresql+psycopg://", "postgres://")):
         print("FAIL: Production database must be PostgreSQL.")
         print(f"Configured scheme: {database_url.split(':', 1)[0]}")
         return 1

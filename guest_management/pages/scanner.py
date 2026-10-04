@@ -1,3 +1,4 @@
+from guest_management.components.loading_overlay import eventlah_viewport_page
 # guest_management/pages/scanner.py
 import reflex as rx
 from guest_management.state import ScannerState
@@ -6,7 +7,7 @@ from guest_management.utils.constants import GOLD, BLACK, LIGHT_GRAY
 
 def scanner_page() -> rx.Component:
     """Production hardened camera layout containing leak safeguards."""
-    return rx.center(
+    return eventlah_viewport_page(rx.center(
         rx.vstack(
             rx.heading("Camera QR Verification Lane", color=GOLD, size="4"),
 
@@ -42,4 +43,7 @@ def scanner_page() -> rx.Component:
         width="100vw",
         height="100vh",
         bg=BLACK
+    ),
+        loading=ScannerState.is_loading,
+        message='Loading scanner...',
     )

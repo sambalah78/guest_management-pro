@@ -1,3 +1,4 @@
+from guest_management.components.loading_overlay import eventlah_viewport_page
 # pages/create_event.py
 import reflex as rx
 from guest_management.state import State, EventState, UIState
@@ -6,7 +7,7 @@ from guest_management.utils.constants import GOLD, BLACK, DARK_GRAY, EVENT_TYPES
 
 def create_event_page():
     """Create event page - fits any screen size without scrolling."""
-    return rx.center(
+    return eventlah_viewport_page(rx.center(
         rx.vstack(
             # Header
             rx.hstack(
@@ -478,4 +479,7 @@ def create_event_page():
         height="100vh",
         bg=BLACK,
         style={"overflow": "hidden"},
+    ),
+        loading=(EventState.is_loading | UIState.is_loading),
+        message='Saving event...',
     )

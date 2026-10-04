@@ -1,5 +1,6 @@
 # guest_management/pages/splash.py
 """Splash screen with animated logo and text."""
+from guest_management.components.loading_overlay import eventlah_viewport_page
 
 import reflex as rx
 from guest_management.state import GuestState
@@ -7,7 +8,7 @@ from guest_management.state import GuestState
 
 def splash_screen() -> rx.Component:
     """Splash screen with flying text animation."""
-    return rx.center(
+    return eventlah_viewport_page(rx.center(
         rx.vstack(
             # Logo
             rx.image(
@@ -138,4 +139,7 @@ def splash_screen() -> rx.Component:
         },
         # Redirect to home after 2.5 seconds
         on_mount=GuestState.redirect_after_delay,
+    ),
+        loading=False,
+        message="",
     )

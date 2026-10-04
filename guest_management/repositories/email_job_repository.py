@@ -339,6 +339,7 @@ class EmailJobRepository:
                         :created_at,
                         :updated_at
                     )
+                    RETURNING id
                     """
                 )
 
@@ -382,7 +383,7 @@ class EmailJobRepository:
                     # We perform a second lookup outside this block.
                     raise
 
-                job_id = result.lastrowid
+                job_id = result.scalar_one_or_none()
 
             # ----------------------------------------------------------
             # Re-read inserted job

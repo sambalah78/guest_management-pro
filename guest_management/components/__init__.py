@@ -1,1 +1,1 @@
-from . import email_management
+"""EventLah UI components package."""

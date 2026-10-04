@@ -1,0 +1,6 @@
+name: eventlah-production
+description: "EventLah production"
+hostname: eventlah
+envfile: .env.production
+provider: reflex-cloud
+vmtype: c1m1

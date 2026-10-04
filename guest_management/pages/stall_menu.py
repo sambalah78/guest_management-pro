@@ -1,5 +1,6 @@
 # guest_management/pages/stall_menu.py
 """Stall menu page – Full corrected version."""
+from guest_management.components.loading_overlay import eventlah_viewport_page
 
 import reflex as rx
 from guest_management.state import VoucherState, GOLD, BLACK, DARK_GRAY
@@ -8,7 +9,7 @@ from guest_management.components.purchase_receipt import purchase_receipt_dialog
 
 def stall_menu():
     """Stall menu page - uses state variables set by on_load."""
-    return rx.cond(
+    return eventlah_viewport_page(rx.cond(
         VoucherState.current_stall & VoucherState.current_guest,
         rx.cond(
             VoucherState.current_guest.get("status") != "Present",
@@ -166,7 +167,7 @@ def stall_menu():
                     bg=DARK_GRAY,
                     border=f"1px solid {GOLD}",
                     border_radius="lg",
-                    width="600px",
+                    width="min(100%, 600px)",
                     max_width="95%",
                 ),
                 width="100%",
@@ -176,4 +177,7 @@ def stall_menu():
             ),
         ),
         rx.center(rx.spinner(color=GOLD), height="100vh", bg=BLACK),
+    ),
+        loading=VoucherState.is_loading,
+        message='Loading menu...',
     )

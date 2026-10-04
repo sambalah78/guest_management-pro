@@ -1,3 +1,4 @@
+from guest_management.components.loading_overlay import eventlah_viewport_page
 import reflex as rx
 
 from guest_management.pages import page_layout
@@ -45,7 +46,7 @@ def feature_card(icon: str, title: str, description: str):
 
 
 def home():
-    return page_layout(
+    return eventlah_viewport_page(page_layout(
         rx.vstack(
             # Main content - centered vertically
             rx.center(
@@ -127,4 +128,7 @@ def home():
             height="100%",
             justify="between",
         ),
+    ),
+        loading=False,
+        message='',
     )

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from .base import BaseRepository
+import base64
 import hashlib
 import hmac
 import secrets
@@ -69,6 +70,37 @@ class ScannerRepository(BaseRepository):
         rows = response.data or []
         return rows[0] if rows else None
 
+    @staticmethod
+    def _pin_cipher_key() -> bytes:
+        from ..core.config import settings
+        import base64
+        digest = hashlib.sha256(
+            str(settings.scanner_station_secret or "").encode("utf-8")
+        ).digest()
+        return base64.urlsafe_b64encode(digest)
+
+    @classmethod
+    def encrypt_pin(cls, pin: str) -> str:
+        from cryptography.fernet import Fernet
+        value = str(pin or "").strip()
+        if len(value) != 4 or not value.isdigit():
+            raise ValueError("Scanner PIN must be exactly 4 digits.")
+        return Fernet(cls._pin_cipher_key()).encrypt(value.encode("utf-8")).decode("utf-8")
+
+    @classmethod
+    def decrypt_pin(cls, ciphertext: str) -> str:
+        from cryptography.fernet import Fernet, InvalidToken
+        value = str(ciphertext or "").strip()
+        if not value:
+            return ""
+        try:
+            pin = Fernet(cls._pin_cipher_key()).decrypt(value.encode("utf-8")).decode("utf-8")
+        except InvalidToken:
+            raise ValueError("Stored scanner PIN could not be decrypted.") from None
+        if len(pin) != 4 or not pin.isdigit():
+            raise ValueError("Stored scanner PIN is invalid.")
+        return pin
+
     def get_by_event(self, event_id: int) -> List[Dict[str, Any]]:
         response = (
             self.db.table("scanner_devices")
@@ -102,6 +134,7 @@ class ScannerRepository(BaseRepository):
             device_name: str,
             access_token_hash: str,
             assigned_by: Optional[str] = None,
+            pin_ciphertext: Optional[str] = None,
     ) -> Dict[str, Any]:
         event_id = int(event_id)
         device_name = str(device_name).strip()
@@ -126,6 +159,7 @@ class ScannerRepository(BaseRepository):
             "device_id": device_id,
             "device_name": device_name,
             "access_token_hash": access_token_hash,
+            "pin_ciphertext": str(pin_ciphertext or "").strip() or None,
             "is_active": True,
             "total_scans": 0,
             "assigned_by": assigned_by,

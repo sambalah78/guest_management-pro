@@ -1,3 +1,5 @@
+from guest_management.state import AuthState
+from guest_management.components.loading_overlay import eventlah_viewport_page
 # pages/print_qr.py
 import reflex as rx
 from guest_management.state import State, VoucherState
@@ -6,7 +8,7 @@ from guest_management.utils.constants import GOLD, BLACK, DARK_GRAY
 
 def print_qr_page():
     """Page for printing all stall QR codes."""
-    return rx.center(
+    return eventlah_viewport_page(rx.center(
         rx.vstack(
             rx.hstack(
                 rx.button(
@@ -59,4 +61,7 @@ def print_qr_page():
         width="100%",
         min_height="100vh",
         bg=BLACK,
+    ),
+        loading=(VoucherState.is_loading | AuthState.is_loading),
+        message='Loading QR codes...',
     )

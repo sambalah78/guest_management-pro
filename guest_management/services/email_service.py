@@ -68,6 +68,49 @@ class EmailService:
         return raw
 
     @staticmethod
+    def _should_include_voucher_access_code(
+        event: Dict[str, Any],
+    ) -> bool:
+        """
+        Voucher credentials are not part of company/corporate
+        invitations or wedding invitations.
+
+        Other event types retain the existing voucher behavior.
+        """
+        event_type = str(
+            event.get("event_type")
+            or event.get("type")
+            or ""
+        ).strip().lower()
+
+        normalized = re.sub(r"[^a-z0-9]+", " ", event_type).strip()
+
+        blocked_exact = {
+            "company",
+            "company event",
+            "company dinner",
+            "corporate",
+            "corporate event",
+            "corporate dinner",
+            "wedding",
+            "wedding reception",
+        }
+
+        if normalized in blocked_exact:
+            return False
+
+        if "wedding" in normalized:
+            return False
+
+        if normalized.startswith("company "):
+            return False
+
+        if normalized.startswith("corporate "):
+            return False
+
+        return True
+
+    @staticmethod
     def _logo_html(event: Dict[str, Any]) -> str:
         """Build the inline company-logo block."""
         if not str(event.get("logo_storage_path") or "").strip():
@@ -122,10 +165,19 @@ class EmailService:
         if not guest_id:
             raise ValidationError("Guest ID is required")
 
-        voucher_access_code = create_voucher_access_code(
-            event_id,
-            guest_id,
+        include_voucher_access_code = (
+            self._should_include_voucher_access_code(event)
         )
+
+        voucher_access_code = (
+            create_voucher_access_code(
+                event_id,
+                guest_id,
+            )
+            if include_voucher_access_code
+            else ""
+        )
+
         guest_id_display = html.escape(guest_id)
 
         name = html.escape(str(guest.get("name") or guest.get("Name") or "Guest"))
@@ -145,6 +197,82 @@ class EmailService:
             f'text-transform:uppercase;color:#888;margin-bottom:10px;">'
             f'{company}</div>'
             if company
+            else ""
+        )
+
+        voucher_access_html = (
+            f"""
+            <!-- VOUCHER ACCESS -->
+            <div style="
+                margin:28px 0 0;
+                padding:22px 18px;
+                text-align:center;
+                background:#171614;
+                border:1px solid #c9a227;
+                border-radius:16px;
+            ">
+
+                <div style="
+                    font-size:11px;
+                    text-transform:uppercase;
+                    letter-spacing:1.8px;
+                    color:#c9a227;
+                    margin-bottom:10px;
+                ">
+                    Voucher Access Code
+                </div>
+
+                <div style="
+                    font-size:11px;
+                    text-transform:uppercase;
+                    letter-spacing:1.5px;
+                    color:#918d84;
+                    margin-bottom:6px;
+                ">
+                    Guest ID
+                </div>
+
+                <div style="
+                    font-size:15px;
+                    font-weight:600;
+                    color:#f5f0e5;
+                    margin-bottom:16px;
+                ">
+                    {guest_id_display}
+                </div>
+
+                <div style="
+                    font-size:11px;
+                    text-transform:uppercase;
+                    letter-spacing:1.5px;
+                    color:#918d84;
+                    margin-bottom:6px;
+                ">
+                    Access Code
+                </div>
+
+                <div style="
+                    font-size:22px;
+                    font-weight:700;
+                    letter-spacing:3px;
+                    font-family:Courier New,monospace;
+                    color:#f5f0e5;
+                    margin-bottom:10px;
+                ">
+                    {voucher_access_code}
+                </div>
+
+                <div style="
+                    font-size:12px;
+                    line-height:1.6;
+                    color:#918d84;
+                ">
+                    Use your Guest ID and Access Code together at voucher stalls.
+                </div>
+
+            </div>
+            """
+            if include_voucher_access_code
             else ""
         )
 
@@ -303,75 +431,9 @@ class EmailService:
             <!-- EVENT INVITATION -->
             {invitation_html}
 
-            <!-- VOUCHER ACCESS -->
-            <div style="
-                margin:28px 0 0;
-                padding:22px 18px;
-                text-align:center;
-                background:#171614;
-                border:1px solid #c9a227;
-                border-radius:16px;
-            ">
+            {voucher_access_html}
 
-                <div style="
-                    font-size:11px;
-                    text-transform:uppercase;
-                    letter-spacing:1.8px;
-                    color:#c9a227;
-                    margin-bottom:10px;
-                ">
-                    Voucher Access Code
-                </div>
-
-                <div style="
-                    font-size:11px;
-                    text-transform:uppercase;
-                    letter-spacing:1.5px;
-                    color:#918d84;
-                    margin-bottom:6px;
-                ">
-                    Guest ID
-                </div>
-
-                <div style="
-                    font-size:15px;
-                    font-weight:600;
-                    color:#f5f0e5;
-                    margin-bottom:16px;
-                ">
-                    {guest_id_display}
-                </div>
-
-                <div style="
-                    font-size:11px;
-                    text-transform:uppercase;
-                    letter-spacing:1.5px;
-                    color:#918d84;
-                    margin-bottom:6px;
-                ">
-                    Access Code
-                </div>
-
-                <div style="
-                    font-size:22px;
-                    font-weight:700;
-                    letter-spacing:3px;
-                    font-family:Courier New,monospace;
-                    color:#f5f0e5;
-                    margin-bottom:10px;
-                ">
-                    {voucher_access_code}
-                </div>
-
-                <div style="
-                    font-size:12px;
-                    line-height:1.6;
-                    color:#918d84;
-                ">
-                    Use your Guest ID and Access Code together at voucher stalls.
-                </div>
-
-            </div>
+            {voucher_access_html}
 
             <!-- PERSONAL QR -->
             <div style="
@@ -483,6 +545,13 @@ class EmailService:
 </html>
 """.strip()
 
+        voucher_plain_text = (
+            f"Guest ID: {guest_id}\n"
+            f"Voucher Access Code: {voucher_access_code}\n\n"
+            if include_voucher_access_code
+            else f"Guest ID: {guest_id}\n\n"
+        )
+
         plain_text = (
             f"Hello {name}!\n\n"
             f"You are invited to {event_name}.\n\n"
@@ -490,8 +559,7 @@ class EmailService:
             f"Time: {time}\n"
             f"Venue: {venue}\n"
             f"Table: {table}\n\n"
-            f"Guest ID: {guest_id}\n"
-            f"Voucher Access Code: {voucher_access_code}\n\n"
+            f"{voucher_plain_text}"
             "Please present your event QR code at the entrance.\n"
         )
 

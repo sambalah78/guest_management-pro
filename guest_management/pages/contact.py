@@ -1,3 +1,4 @@
+from guest_management.components.loading_overlay import eventlah_viewport_page
 # guest_management/pages/contact.py
 import reflex as rx
 from guest_management.state import State, GOLD, WHITE, BLACK, DARK_GRAY, UIState
@@ -7,7 +8,7 @@ from guest_management.pages import page_layout
 
 def contact_page() -> rx.Component:
     """Contact us page with form"""
-    return page_layout(
+    return eventlah_viewport_page(page_layout(
         rx.center(
             rx.grid(
                 # Contact Form
@@ -136,4 +137,7 @@ def contact_page() -> rx.Component:
             width="100%",
             padding="0.5em",
         )
+    ),
+        loading=UIState.is_loading,
+        message='Sending message...',
     )

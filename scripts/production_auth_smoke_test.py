@@ -20,7 +20,7 @@ EXPECTED_ADMINS = {
 
 
 def main() -> int:
-    load_dotenv()
+    load_dotenv(os.getenv("EVENTLAH_ENV_FILE", ".env"), override=True)
 
     supabase_url = os.getenv("SUPABASE_URL", "").strip()
     service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()

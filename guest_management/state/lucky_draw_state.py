@@ -71,6 +71,8 @@ class LuckyDrawState(rx.State):
     show_clear_confirm: bool = False
     predraw_page: int = 0
     predraw_page_size: int = 26
+    predraw_rotation_interval_ms: int = 10000
+    predraw_rotation_seconds: int = 10
     prize_selected_file_name: str = ''
     _prize_file_content: bytes = b''
     _prize_filename: str = ''
@@ -209,6 +211,8 @@ class LuckyDrawState(rx.State):
 
         The event ID in the route is authoritative.
         """
+        self.is_loading = True
+        yield
         try:
             import re
             path = getattr(self.router.url, 'path', '') or ''
@@ -220,13 +224,19 @@ class LuckyDrawState(rx.State):
                 self.lucky_draw_eligible_guests = []
                 yield rx.toast.error('No Lucky Draw event selected.')
                 return
+
             event_id = int(match.group(1))
             auth = await self.get_state(AuthState)
             if not auth.user_id:
                 yield rx.redirect('/login')
                 return
+
             try:
-                event = EventService().get_event(event_id, auth.user_id, auth.user)
+                event = EventService().get_event(
+                    event_id,
+                    auth.user_id,
+                    auth.user,
+                )
             except (AuthorizationError, EventNotFoundError):
                 self.current_event_id = ''
                 self.current_event = None
@@ -234,6 +244,7 @@ class LuckyDrawState(rx.State):
                 yield rx.toast.error('Event not found or access denied.')
                 yield rx.redirect('/events')
                 return
+
             if not event:
                 self.current_event_id = ''
                 self.current_event = None
@@ -241,23 +252,38 @@ class LuckyDrawState(rx.State):
                 yield rx.toast.error('Event not found or access denied.')
                 yield rx.redirect('/events')
                 return
-            event_type = str(event.get('event_type') or 'company_dinner').strip().lower()
+
+            event_type = str(
+                event.get('event_type') or 'company_dinner'
+            ).strip().lower()
             event_config = EVENT_TYPES.get(event_type)
-            if not event_config or not event_config.get('features', {}).get('lucky_draw', False):
-                yield rx.toast.error('Lucky Draw is not enabled for this event type.')
+
+            if not event_config or not event_config.get(
+                'features', {}
+            ).get('lucky_draw', False):
+                yield rx.toast.error(
+                    'Lucky Draw is not enabled for this event type.'
+                )
                 yield rx.redirect(f'/dashboard/{event_id}')
                 return
+
             self.current_event_id = str(event_id)
             self.current_event = dict(event)
-            self.lucky_draw_event_name = str(event.get('name', ''))
+            self.lucky_draw_event_name = str(
+                event.get('name', '')
+            )
             self.lucky_draw_event_type = event_type
+
             if event_type == 'lucky_draw':
                 self.lucky_draw_only_present = False
             else:
                 self.lucky_draw_only_present = True
+
             await self.load_lucky_draw_eligible_guests()
             await self.load_pre_draw_prizes()
+            await self.load_pre_draw_winners()
             yield
+
         except Exception:
             logger.exception('Failed to initialize Lucky Draw event')
             self.current_event_id = ''
@@ -265,27 +291,45 @@ class LuckyDrawState(rx.State):
             self.lucky_draw_eligible_guests = []
             yield rx.toast.error('Unable to load Lucky Draw event.')
 
+        finally:
+            self.is_loading = False
+            yield
     async def initialize_pre_draw_display(self):
         """Initialize the pre-draw presentation from its event_id query parameter."""
+        self.is_loading = True
+        yield
         import urllib.parse
+
         try:
             query_str = str(self.router.url.query or '')
             if query_str.startswith('?'):
                 query_str = query_str[1:]
+
             params = urllib.parse.parse_qs(query_str)
-            event_id_raw = str(params.get('event_id', [''])[0] or '').strip()
+            event_id_raw = str(
+                params.get('event_id', [''])[0] or ''
+            ).strip()
+
             if not event_id_raw:
                 self.current_event_id = ''
                 self.current_event = None
                 self.lucky_draw_event_name = ''
                 yield rx.toast.error('No Lucky Draw event selected.')
                 return
+
             event_id = int(event_id_raw)
             auth = await self.get_state(AuthState)
+
             if not auth.user_id:
                 yield rx.redirect('/login')
                 return
-            event = EventService().get_event(event_id, auth.user_id, auth.user)
+
+            event = EventService().get_event(
+                event_id,
+                auth.user_id,
+                auth.user,
+            )
+
             if not event:
                 self.current_event_id = ''
                 self.current_event = None
@@ -293,29 +337,54 @@ class LuckyDrawState(rx.State):
                 yield rx.toast.error('Event not found or access denied.')
                 yield rx.redirect('/events')
                 return
-            event_type = str(event.get('event_type') or 'company_dinner').strip().lower()
+
+            event_type = str(
+                event.get('event_type') or 'company_dinner'
+            ).strip().lower()
             event_config = EVENT_TYPES.get(event_type)
-            if not event_config or not event_config.get('features', {}).get('lucky_draw', False):
-                yield rx.toast.error('Lucky Draw is not enabled for this event type.')
+
+            if not event_config or not event_config.get(
+                'features', {}
+            ).get('lucky_draw', False):
+                yield rx.toast.error(
+                    'Lucky Draw is not enabled for this event type.'
+                )
                 yield rx.redirect(f'/dashboard/{event_id}')
                 return
+
             self.current_event_id = str(event_id)
             self.current_event = dict(event)
-            self.lucky_draw_event_name = str(event.get('name') or '')
+            self.lucky_draw_event_name = str(
+                event.get('name') or ''
+            )
             self.lucky_draw_event_type = event_type
-            self.lucky_draw_only_present = False if event_type == 'lucky_draw' else True
+            self.lucky_draw_only_present = (
+                False if event_type == 'lucky_draw' else True
+            )
+
             await self.load_pre_draw_display_participants()
             yield
+
         except (TypeError, ValueError):
             self.current_event_id = ''
             self.current_event = None
-            yield rx.toast.error('Invalid Lucky Draw event selected.')
+            yield rx.toast.error(
+                'Invalid Lucky Draw event selected.'
+            )
+
         except Exception:
-            logger.exception('Failed to initialize pre-draw display')
+            logger.exception(
+                'Failed to initialize pre-draw display'
+            )
             self.current_event_id = ''
             self.current_event = None
-            yield rx.toast.error('Unable to load Lucky Draw event.')
+            yield rx.toast.error(
+                'Unable to load Lucky Draw event.'
+            )
 
+        finally:
+            self.is_loading = False
+            yield
     def reset_draw_lifecycle(self):
         """Reset runtime draw state without deleting configured prizes."""
         self.draw_status = DRAW_IDLE
@@ -781,24 +850,32 @@ class LuckyDrawState(rx.State):
             logger.exception('Unable to refresh pre-draw display for event %s', self.current_event_id)
 
     async def load_pre_draw_winners(self):
-        """
-        Load preliminary winners from the authoritative database.
-
-        Preliminary winners are completely separate from live Lucky Draw
-        winners and must never be copied into winners_list.
-        """
         try:
             event_id = int(self.current_event_id or 0)
+
             if not event_id:
                 self.pre_draw_winners = []
                 return
-            service = PreDrawWinnerService()
-            self.pre_draw_winners = [dict(winner) for winner in service.get_by_event(event_id)]
-            logger.info('Loaded %d pre-draw winners for event %s', len(self.pre_draw_winners), event_id)
-        except Exception:
-            logger.exception('Unable to load pre-draw winners for event %s', self.current_event_id)
-            self.pre_draw_winners = []
 
+            event_id = await self._authorize_lucky_draw_event(event_id)
+            service = PreDrawWinnerService()
+
+            self.pre_draw_winners = [
+                dict(winner)
+                for winner in service.get_by_event(event_id)
+            ]
+
+            logger.info(
+                "Loaded %d pre-draw winners for event %s",
+                len(self.pre_draw_winners),
+                event_id,
+            )
+        except Exception:
+            logger.exception(
+                "Unable to load pre-draw winners for event %s",
+                self.current_event_id,
+            )
+            self.pre_draw_winners = []
     def _rebuild_pre_draw_display_rows(self):
         """
         Build the public presentation dataset from PRE-DRAW WINNERS ONLY.
@@ -909,13 +986,18 @@ class LuckyDrawState(rx.State):
         return f'Winners {start}–{end} of {total}'
 
     def predraw_next_page(self):
-        """Move the public pre-draw display forward one page."""
-        page_count = self.predraw_page_count
-        if page_count <= 0:
+        """Advance the public pre-draw display with wrap-around."""
+        page_count = int(self.predraw_page_count or 0)
+
+        if page_count <= 1:
             self.predraw_page = 0
             return
-        if self.predraw_page < page_count - 1:
-            self.predraw_page += 1
+
+        current_page = int(self.predraw_page or 0)
+
+        # Always wrap:
+        # 0 -> 1 -> 2 -> ... -> last -> 0
+        self.predraw_page = (current_page + 1) % page_count
 
     def predraw_previous_page(self):
         """Move the public pre-draw display backward one page."""
@@ -1112,22 +1194,68 @@ class LuckyDrawState(rx.State):
             logger.exception('Error clearing winners for event %s', self.current_event_id)
             yield rx.toast.error(f'Error: {str(e)}')
 
-    def download_winner_list(self):
-        """Generates and downloads a CSV of the winners list."""
+    async def download_winner_list(self):
+        """Generate and download the winner list only after re-authorizing event access."""
         if not self.winners_list:
-            return rx.toast.error('No winners to export')
-        import pandas as pd
-        df = pd.DataFrame(self.winners_list)
-        export_columns = ['name', 'guest_id', 'prize_name', 'prize_value', 'created_at']
-        available_cols = [c for c in export_columns if c in df.columns]
-        df = df[available_cols]
-        column_names = {'name': 'Winner Name', 'guest_id': 'Guest ID', 'prize_name': 'Prize', 'prize_value': 'Prize Value', 'created_at': 'Date & Time'}
-        df = df.rename(columns={k: v for k, v in column_names.items() if k in df.columns})
-        if 'Date & Time' in df.columns:
-            df['Date & Time'] = df['Date & Time'].apply(lambda x: x.split('T')[0] if x and 'T' in str(x) else x)
-        csv_data = df.to_csv(index=False)
-        return rx.download(data=csv_data, filename=f"winners_event_{self.current_event_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+            yield rx.toast.error('No winners to export')
+            return
 
+        if not self.current_event_id:
+            yield rx.toast.error('No Lucky Draw event selected.')
+            return
+
+        try:
+            event_id = await self._authorize_lucky_draw_event(int(self.current_event_id))
+        except AuthorizationError:
+            yield rx.toast.error('You are not authorized to access this Lucky Draw event.')
+            return
+        except Exception:
+            logger.exception(
+                'Unable to authorize Lucky Draw winner export for event %s',
+                self.current_event_id,
+            )
+            yield rx.toast.error('Unable to authorize Lucky Draw winner export.')
+            return
+
+        try:
+            import pandas as pd
+
+            df = pd.DataFrame(self.winners_list)
+            export_columns = ['name', 'guest_id', 'prize_name', 'prize_value', 'created_at']
+            available_cols = [c for c in export_columns if c in df.columns]
+            df = df[available_cols]
+
+            column_names = {
+                'name': 'Winner Name',
+                'guest_id': 'Guest ID',
+                'prize_name': 'Prize',
+                'prize_value': 'Prize Value',
+                'created_at': 'Date & Time',
+            }
+            df = df.rename(
+                columns={k: v for k, v in column_names.items() if k in df.columns}
+            )
+
+            if 'Date & Time' in df.columns:
+                df['Date & Time'] = df['Date & Time'].apply(
+                    lambda x: x.split('T')[0] if x and 'T' in str(x) else x
+                )
+
+            csv_data = df.to_csv(index=False)
+            yield rx.download(
+                data=csv_data,
+                filename=(
+                    f'winners_event_{event_id}_'
+                    f'{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+                ),
+            )
+        except Exception as exc:
+            logger.exception(
+                'Winner export failed for event %s: %s',
+                event_id,
+                exc,
+            )
+            yield rx.toast.error(f'Error exporting winners: {exc}')
     def _reset_candidate_state(self):
         """Clear the current pending candidate."""
         self.pending_candidate = {}
@@ -1171,7 +1299,7 @@ class LuckyDrawState(rx.State):
         self.lucky_draw_prize_name = str(first_prize.get('name') or '')
         self.lucky_draw_prize_value = str(first_prize.get('value') or '')
         self.lucky_draw_prize_picture = str(first_prize.get('image_url') or '')
-        display_payload = {'current_event_id': str(self.current_event_id), 'current_event_name': str(self.lucky_draw_event_name or ''), 'event_type': str(self.lucky_draw_event_type or ''), 'prize_mode': str(self.prize_mode or 'multiple'), 'current_prizes': [dict(prize) for prize in self.current_prizes], 'current_prize_index': 0, 'lucky_draw_only_present': bool(self.lucky_draw_only_present), 'winners': [dict(winner) for winner in self.winners_list if isinstance(winner, dict)]}
+        display_payload = {'current_event_id': str(self.current_event_id), 'current_event_name': str(self.lucky_draw_event_name or ''), 'event_type': str(self.lucky_draw_event_type or ''), 'prize_mode': str(self.prize_mode or 'multiple'), 'current_prizes': [dict(prize) for prize in self.current_prizes], 'current_prize_index': 0, 'lucky_draw_only_present': bool(self.lucky_draw_only_present)}
         payload_json = json.dumps(display_payload, separators=(',', ':'), ensure_ascii=False)
         encoded_payload = base64.urlsafe_b64encode(payload_json.encode('utf-8')).decode('ascii')
         yield self.broadcast_lucky_draw_state()
@@ -1466,20 +1594,130 @@ class LuckyDrawState(rx.State):
         """Redirect back to lucky draw setup page."""
         return rx.redirect(f'/lucky-draw')
 
+
+
+    def _lucky_draw_browser_state(self):
+        """Return the live Lucky Draw state used by same-browser displays."""
+        return {
+            "event_id": str(self.current_event_id or ""),
+            "event_name": str(self.lucky_draw_event_name or ""),
+            "prize_name": str(self.lucky_draw_prize_name or ""),
+            "prize_value": str(self.lucky_draw_prize_value or ""),
+            "prize_picture": str(self.lucky_draw_prize_picture or ""),
+            "current_name": str(self.lucky_draw_current_name or ""),
+            "current_id": str(self.lucky_draw_current_id or ""),
+            "status": str(self.draw_status or ""),
+            "spinning": bool(self.lucky_draw_spinning),
+            "winners": [
+                dict(w)
+                for w in self.winners_list[:10]
+                if isinstance(w, dict)
+            ],
+            "prize_index": int(self.current_prize_index or 0),
+            "prize_count": len(self.current_prizes),
+            "wheel_names": [
+                str(name)
+                for name in self.wheel_names[:24]
+            ],
+        }
+
     def broadcast_lucky_draw_state(self):
         """Broadcast live draw state to hall-screen tabs in the same browser."""
         import json
-        payload = {'event_id': str(self.current_event_id or ''), 'event_name': str(self.lucky_draw_event_name or ''), 'prize_name': str(self.lucky_draw_prize_name or ''), 'prize_value': str(self.lucky_draw_prize_value or ''), 'prize_picture': str(self.lucky_draw_prize_picture or ''), 'current_name': str(self.lucky_draw_current_name or ''), 'current_id': str(self.lucky_draw_current_id or ''), 'status': str(self.draw_status or ''), 'spinning': bool(self.lucky_draw_spinning), 'winners': [dict(w) for w in self.winners_list[:10] if isinstance(w, dict)], 'prize_index': int(self.current_prize_index or 0), 'prize_count': len(self.current_prizes), 'wheel_names': [str(n) for n in self.wheel_names[:24]]}
-        encoded = json.dumps(payload, ensure_ascii=False).replace('\\', '\\\\').replace("'", "\\'")
-        return rx.call_script(f"(() => {{ const state = JSON.parse('{encoded}'); localStorage.setItem('eventlah-lucky-draw-state', JSON.stringify(state)); const c = new BroadcastChannel('eventlah-lucky-draw'); c.postMessage(state); c.close(); }})()")
+
+        payload = self._lucky_draw_browser_state()
+        encoded = (
+            json.dumps(payload, ensure_ascii=False)
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+        )
+
+        return rx.call_script(
+            f"""(() => {{
+                const state = JSON.parse('{encoded}');
+                localStorage.setItem('eventlah-lucky-draw-state:' + String(state.event_id || ''),
+                    JSON.stringify(state)
+                );
+
+                try {{
+                    const channel =
+                        new BroadcastChannel('eventlah-lucky-draw');
+                    channel.postMessage(state);
+                    channel.close();
+                }} catch (_) {{}}
+            }})()"""
+        )
+
+    async def open_pre_draw_display(self):
+        """Authorize the event and open the pre-draw audience display."""
+        event_id = str(self.current_event_id or "").strip()
+        if not event_id:
+            return rx.toast.error("No Lucky Draw event selected.")
+
+        try:
+            event_id = await self._authorize_lucky_draw_event(int(event_id))
+        except Exception as exc:
+            return rx.toast.error(str(exc))
+
+        open_script = rx.call_script(
+            f"""window.open(
+                '/lucky-draw/pre-draw-display?event_id={event_id}',
+                'eventlahLuckyDrawPreDraw',
+                'popup=yes,width=1600,height=1000,resizable=yes,scrollbars=no'
+            );"""
+        )
+        return open_script
 
     def open_hall_screen(self):
-        """Open the audience-only display in a separate browser window."""
-        event_id = str(self.current_event_id or '').strip()
+        """Seed state, broadcast it, and open the audience display."""
+        import json
+
+        event_id = str(self.current_event_id or "").strip()
         if not event_id:
-            return rx.toast.error('No Lucky Draw event selected.')
-        open_script = rx.call_script(f"(() => {{ const w = window.open('/lucky-draw/external-display/{event_id}', 'eventlahLuckyDrawExternal', 'popup=yes,width=1600,height=1000,resizable=yes,scrollbars=no'); if (w) w.focus(); }})()")
-        return [open_script, self.broadcast_lucky_draw_state()]
+            return rx.toast.error("No Lucky Draw event selected.")
+
+        payload = self._lucky_draw_browser_state()
+        encoded = (
+            json.dumps(payload, ensure_ascii=False)
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+        )
+
+        open_script = rx.call_script(
+            f"""(() => {{
+                const state = JSON.parse('{encoded}');
+
+                // Seed the event-specific state before opening the display.
+                localStorage.setItem(
+                    'eventlah-lucky-draw-state:' + String(state.event_id || ''),
+                    JSON.stringify(state)
+                );
+
+                // Broadcast immediately so already-open displays update too.
+                try {{
+                    const channel =
+                        new BroadcastChannel('eventlah-lucky-draw');
+                    channel.postMessage(state);
+                    channel.close();
+                }} catch (_) {{}}
+
+                // Open the existing external-display route.
+                const w = window.open(
+                    '/lucky-draw/external-display/{event_id}',
+                    'eventlahLuckyDrawExternal',
+                    'popup=yes,width=1600,height=1000,resizable=yes,scrollbars=no'
+                );
+
+                if (w) {{
+                    w.focus();
+                }}
+            }})()"""
+        )
+
+        return [
+            self.broadcast_lucky_draw_state(),
+            open_script,
+        ]
 
     async def refresh_display_data(self):
         """Refresh authoritative winner history without resetting live draw state."""
@@ -1509,60 +1747,159 @@ class LuckyDrawState(rx.State):
         Participant lists are loaded from the repository rather than
         placed into the URL.
         """
+        self.is_loading = True
+        yield
         import urllib.parse
+
         try:
             query_str = str(self.router.url.query or '')
             if query_str.startswith('?'):
                 query_str = query_str[1:]
+
             if not query_str:
-                logger.warning('Live Lucky Draw display opened without query parameters.')
-                yield rx.toast.error('No Lucky Draw session was provided.')
+                logger.warning(
+                    'Live Lucky Draw display opened without query parameters.'
+                )
+                yield rx.toast.error(
+                    'No Lucky Draw session was provided.'
+                )
                 return
+
             params = urllib.parse.parse_qs(query_str)
-            event_id = str(params.get('event_id', [''])[0] or '').strip()
+            event_id = str(
+                params.get('event_id', [''])[0] or ''
+            ).strip()
             data_param = params.get('data', [None])[0]
+
             if not event_id:
-                yield rx.toast.error('No Lucky Draw event selected.')
+                yield rx.toast.error(
+                    'No Lucky Draw event selected.'
+                )
                 return
-            if str(self.current_event_id or '').strip() == event_id and self.current_prizes:
+
+            if (
+                str(self.current_event_id or '').strip() == event_id
+                and self.current_prizes
+            ):
                 await self.load_winners()
                 yield
                 return
+
             self.current_event_id = event_id
+
             if data_param:
                 try:
-                    padded = data_param + '=' * (-len(data_param) % 4)
-                    decoded = base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8')
+                    padded = (
+                        data_param
+                        + '=' * (-len(data_param) % 4)
+                    )
+                    decoded = (
+                        base64.urlsafe_b64decode(
+                            padded.encode('ascii')
+                        ).decode('utf-8')
+                    )
                     data = json.loads(decoded)
                 except Exception:
-                    data = json.loads(urllib.parse.unquote(data_param))
-                self.prize_mode = str(data.get('prize_mode', self.prize_mode))
-                self.current_prizes = [dict(prize) for prize in data.get('current_prizes', []) if isinstance(prize, dict) and str(prize.get('name') or '').strip()]
+                    data = json.loads(
+                        urllib.parse.unquote(data_param)
+                    )
+
+                self.prize_mode = str(
+                    data.get(
+                        'prize_mode',
+                        self.prize_mode,
+                    )
+                )
+
+                self.current_prizes = [
+                    dict(prize)
+                    for prize in data.get(
+                        'current_prizes',
+                        [],
+                    )
+                    if (
+                        isinstance(prize, dict)
+                        and str(
+                            prize.get('name') or ''
+                        ).strip()
+                    )
+                ]
+
                 if not self.current_prizes:
-                    yield rx.toast.error('No prizes are configured for this Lucky Draw.')
+                    yield rx.toast.error(
+                        'No prizes are configured for this Lucky Draw.'
+                    )
                     return
+
                 try:
-                    self.current_prize_index = int(data.get('current_prize_index', 0) or 0)
+                    self.current_prize_index = int(
+                        data.get(
+                            'current_prize_index',
+                            0,
+                        )
+                        or 0
+                    )
                 except (TypeError, ValueError):
                     self.current_prize_index = 0
-                self.current_prize_index = max(0, min(self.current_prize_index, len(self.current_prizes) - 1))
-                self.current_event_id = str(data.get('current_event_id', self.current_event_id) or self.current_event_id)
-                self.lucky_draw_event_name = str(data.get('current_event_name', self.lucky_draw_event_name) or self.lucky_draw_event_name)
-                event_type = str(data.get('event_type', '') or '').strip().lower()
+
+                self.current_prize_index = max(
+                    0,
+                    min(
+                        self.current_prize_index,
+                        len(self.current_prizes) - 1,
+                    ),
+                )
+
+                self.current_event_id = str(
+                    data.get(
+                        'current_event_id',
+                        self.current_event_id,
+                    )
+                    or self.current_event_id
+                )
+
+                self.lucky_draw_event_name = str(
+                    data.get(
+                        'current_event_name',
+                        self.lucky_draw_event_name,
+                    )
+                    or self.lucky_draw_event_name
+                )
+
+                event_type = str(
+                    data.get('event_type', '')
+                    or ''
+                ).strip().lower()
+
                 if event_type in EVENT_TYPES:
                     self.lucky_draw_event_type = event_type
                     if event_type == 'lucky_draw':
                         self.lucky_draw_only_present = False
                 else:
-                    self.lucky_draw_only_present = bool(data.get('lucky_draw_only_present', self.lucky_draw_only_present))
-                self.winners_list = [dict(winner) for winner in data.get('winners', []) if isinstance(winner, dict)]
+                    self.lucky_draw_only_present = bool(
+                        data.get(
+                            'lucky_draw_only_present',
+                            self.lucky_draw_only_present,
+                        )
+                    )
+
                 self._set_current_prize()
+
             await self._fetch_display_data_from_api()
             yield
-        except Exception as exc:
-            logger.exception('Unable to initialize live Lucky Draw display for event %s', self.current_event_id)
-            yield rx.toast.error(f'Unable to load Lucky Draw display: {exc}')
 
+        except Exception as exc:
+            logger.exception(
+                'Unable to initialize live Lucky Draw display for event %s',
+                self.current_event_id,
+            )
+            yield rx.toast.error(
+                f'Unable to load Lucky Draw display: {exc}'
+            )
+
+        finally:
+            self.is_loading = False
+            yield
     async def clear_pre_draw_winners(self):
         """Clear the persisted pre-draw winner list for the current event."""
         if not self.current_event_id:
@@ -1570,7 +1907,7 @@ class LuckyDrawState(rx.State):
             return
         try:
             event_id = await self._authorize_lucky_draw_event(int(self.current_event_id))
-            PreDrawWinnerService().delete_by_event(event_id)
+            PreDrawWinnerService().delete_for_event(event_id)
             PreDrawPrizeRepository().reset_generated_for_event(event_id)
             self.pre_draw_winners = []
             self.pre_draw_winner_filename = ''

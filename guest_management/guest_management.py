@@ -8,8 +8,8 @@ from guest_management.auth_api import api as auth_api
 from guest_management.pages import (
     home_page, sign_in, events, create_event,
     dashboard, check_in, success, already_checked, scanner, lucky_draw,
-    voucher_manager, stall_landing, stall_menu, scanner_guest, about,
-    products, contact, print_qr, select_event_type, lucky_draw_display, pre_draw_display, splash, health, lucky_draw_external_display
+    voucher_manager, stall_landing, stall_menu, scanner_guest, scanner_login, about,
+    products, contact, print_qr, select_event_type, lucky_draw_display, pre_draw_display, splash, health, lucky_draw_external_display, lucky_draw_hall
 
 )
 if settings.is_production:
@@ -43,6 +43,80 @@ app = rx.App(
             "document.head.appendChild(link);"
         ),
         rx.script(src="/js/usb_scanner.js"),
+        rx.script(
+            """
+            (() => {
+                const id = "eventlah-global-viewport-style";
+                if (document.getElementById(id)) return;
+                const style = document.createElement("style");
+                style.id = id;
+                style.textContent = `
+                    *,
+                    *::before,
+                    *::after {
+                        box-sizing: border-box;
+                    }
+
+                    html,
+                    body,
+                    #__next {
+                        width: 100%;
+                        height: 100%;
+                        min-width: 0;
+                        min-height: 0;
+                        margin: 0;
+                        padding: 0;
+                        overflow: hidden !important;
+                    }
+
+                    body {
+                        width: 100vw;
+                        height: 100dvh;
+                        max-width: 100vw;
+                        max-height: 100dvh;
+                        overscroll-behavior: none;
+                    }
+
+                    #__next {
+                        height: 100dvh;
+                        max-height: 100dvh;
+                    }
+
+                    #__next > div {
+                        width: 100%;
+                        height: 100%;
+                        min-width: 0;
+                        min-height: 0;
+                        max-height: 100dvh;
+                        overflow: hidden;
+                    }
+
+                    img,
+                    video,
+                    canvas,
+                    svg {
+                        max-width: 100%;
+                    }
+
+                    .eventlah-viewport-page {
+                        width: 100%;
+                        height: 100dvh;
+                        min-width: 0;
+                        min-height: 0;
+                        max-height: 100dvh;
+                        overflow: hidden;
+                    }
+
+                    .eventlah-page-scroll {
+                        min-height: 0;
+                        overflow-x: hidden;
+                        overflow-y: auto;
+                    }
+                `;
+                document.head.appendChild(style);
+            })();
+            """
+        ),
     ]
 )
 
@@ -72,6 +146,13 @@ app.add_page(
     title="Manual Check-In",
 )
 
+# Scanner agent PIN login
+app.add_page(
+    scanner_login.scanner_login_page,
+    route="/scanner-login/[event_id]",
+    on_load=ScannerState.scanner_login_on_load,
+)
+
 # Scanner routes - Use ScannerState
 app.add_page(
     scanner.scanner_page,
@@ -81,12 +162,12 @@ app.add_page(
 app.add_page(
     scanner_guest.scanner_guest_page,
     route="/scanner_guest/[event_id]",
-    on_load=ScannerState.set_current_event_from_url
+    on_load=ScannerState.scanner_guest_on_load
 )
 app.add_page(
     scanner_guest.scanner_guest_page,
     route="/scanner-guest/[event_id]",
-    on_load=ScannerState.set_current_event_from_url
+    on_load=ScannerState.scanner_guest_on_load
 )
 
 # Success route
@@ -158,7 +239,7 @@ app.add_page(
     ],
 )
 app.add_page(
-    lucky_draw_external_display.lucky_draw_external_display_page,
+    lucky_draw_hall.lucky_draw_hall_page,
     route="/lucky-draw/external-display/[event_id]",
     title="Lucky Draw External Display",
 )

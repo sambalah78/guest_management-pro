@@ -346,6 +346,8 @@ class VoucherState(rx.State):
             return None
 
     async def load_stalls(self):
+        self.is_loading = True
+        yield
         if not self.current_event_id:
             return
 
@@ -382,6 +384,7 @@ class VoucherState(rx.State):
             logger.error(f"Error loading stalls: {e}")
             self.stalls_list = []
         finally:
+            self.is_loading = False
             yield
 
     def load_stall_by_id(self, stall_id: int) -> bool:

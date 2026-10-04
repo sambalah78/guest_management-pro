@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from supabase_auth.errors import AuthApiError
 
 from guest_management.core.config import settings
 from guest_management.repositories.auth_repository import AuthRepository
@@ -52,7 +53,9 @@ SESSION_COOKIE_NAME = "eventlah_session"
 
 # Keep the browser session cookie deliberately opaque.
 SESSION_COOKIE_PATH = "/"
-SESSION_COOKIE_SAMESITE = "lax"
+SESSION_COOKIE_SAMESITE = (
+    "none" if settings.is_production else "lax"
+)
 
 # Production must use HTTPS.
 SESSION_COOKIE_SECURE = settings.is_production
@@ -211,6 +214,25 @@ def create_auth_session(
 
     except HTTPException:
         raise
+
+    except AuthApiError as exc:
+        status = getattr(exc, "status", None)
+
+        if status in (400, 401):
+            # Do not reveal whether the email or password was incorrect.
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid email or password.",
+            )
+
+        logger.exception(
+            "Supabase authentication service error (status=%s).",
+            status,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Authentication service error.",
+        )
 
     except (ValueError, PermissionError):
         # Do not reveal whether the email or password was incorrect.

@@ -361,6 +361,42 @@ class EmailWorker:
             subtype="html",
         )
 
+        # Attach event branding to the HTML MIME part so clients such as
+        # Outlook/Hotmail can resolve cid:event-logo / cid:event-invitation.
+        event_response = (
+            self.guest_repo.db
+            .table("events")
+            .select(
+                "id,"
+                "logo_storage_path,"
+                "logo_filename,"
+                "logo_mime_type,"
+                "invitation_storage_path,"
+                "invitation_filename,"
+                "invitation_mime_type"
+            )
+            .eq("id", event_id)
+            .limit(1)
+            .execute()
+        )
+
+        event = (
+            event_response.data[0]
+            if event_response.data
+            else None
+        )
+
+        if event:
+            self._add_event_branding(
+                message,
+                event,
+            )
+        else:
+            logger.warning(
+                "Event %s not found while building email assets",
+                event_id,
+            )
+
         qr_png = self.build_qr_png(
             event_id=event_id,
             guest_id=guest_id,

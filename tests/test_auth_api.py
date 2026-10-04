@@ -1,8 +1,10 @@
 from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
+from supabase_auth.errors import AuthApiError
 
 from guest_management.auth_api import (
+    SESSION_COOKIE_SAMESITE,
     SESSION_COOKIE_SECURE,
     api,
 )
@@ -81,7 +83,7 @@ def test_create_auth_session_sets_secure_httponly_cookie():
         assert "Secure" in set_cookie
     else:
         assert "Secure" not in set_cookie
-    assert "SameSite=lax" in set_cookie
+    assert f"SameSite={SESSION_COOKIE_SAMESITE}" in set_cookie
     assert "Path=/" in set_cookie
 
     # Supabase credentials must never be returned to the browser.
@@ -98,6 +100,31 @@ def test_create_auth_session_rejects_invalid_credentials():
         repository.sign_in_with_password.side_effect = PermissionError(
             "invalid credentials"
         )
+
+        response = client.post(
+            "/api/auth/session",
+            json={
+                "email": "admin@example.com",
+                "password": "wrong-password",
+            },
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": "Invalid email or password."
+    }
+
+def test_create_auth_session_handles_supabase_auth_api_error():
+    class FakeAuthApiError(AuthApiError):
+        def __init__(self):
+            Exception.__init__(self, "Invalid login credentials")
+            self.status = 400
+
+    with patch(
+        "guest_management.auth_api.AuthRepository"
+    ) as repository_class:
+        repository = repository_class.return_value
+        repository.sign_in_with_password.side_effect = FakeAuthApiError()
 
         response = client.post(
             "/api/auth/session",
@@ -181,7 +208,7 @@ def test_logout_revokes_session_and_clears_cookie():
         assert "Secure" in set_cookie
     else:
         assert "Secure" not in set_cookie
-    assert "SameSite=lax" in set_cookie
+    assert f"SameSite={SESSION_COOKIE_SAMESITE}" in set_cookie
     assert "Path=/" in set_cookie
 
 
@@ -210,7 +237,7 @@ def test_logout_without_cookie_still_clears_cookie():
         assert "Secure" in set_cookie
     else:
         assert "Secure" not in set_cookie
-    assert "SameSite=lax" in set_cookie
+    assert f"SameSite={SESSION_COOKIE_SAMESITE}" in set_cookie
     assert "Path=/" in set_cookie
 
 def test_create_auth_session_rejects_foreign_origin():

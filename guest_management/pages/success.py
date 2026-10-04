@@ -1,10 +1,12 @@
-﻿# guest_management/pages/success.py
+# guest_management/pages/success.py
 """Successful check-in receipt page."""
+from guest_management.components.loading_overlay import eventlah_viewport_page
 
 import reflex as rx
 
 from guest_management.state import SuccessState
 from guest_management.utils.constants import GOLD, BLACK
+from guest_management.utils.formatting import page_layout
 
 
 def _detail(label: str, value):
@@ -32,7 +34,7 @@ def _detail(label: str, value):
 
 def success_page():
     """Premium event-day success receipt."""
-    return rx.center(
+    return eventlah_viewport_page(page_layout(rx.center(
         rx.cond(
             SuccessState.is_fetching,
             rx.vstack(
@@ -41,7 +43,7 @@ def success_page():
                 spacing="2",
                 align="center",
             ),
-            rx.vstack(
+            rx.vstack(rx.hstack(
                 rx.box(
                     rx.icon(tag="circle_check", size=72, color=GOLD),
                     padding="0.75em",
@@ -55,7 +57,7 @@ def success_page():
                     color=GOLD,
                     weight="bold",
                     text_align="center",
-                ),
+                ),),
                 rx.text(
                     f"Welcome, {SuccessState.guest_name}!",
                     size="4",
@@ -176,37 +178,11 @@ def success_page():
                         height="50px",
                         border_radius="30px",
                     ),
-                    rx.button(
-                        rx.hstack(
-                            rx.icon(tag="layout_dashboard", size=18),
-                            rx.text("Dashboard", size="2", weight="bold"),
-                        ),
-                        on_click=rx.redirect(
-                            f"/dashboard/{SuccessState.success_event_id}"
-                        ),
-                        bg="#333333",
-                        color="white",
-                        width="50%",
-                        height="50px",
-                        border_radius="30px",
-                    ),
+
                     spacing="3",
                     width="100%",
                 ),
 
-                rx.button(
-                    rx.hstack(
-                        rx.icon(tag="x", size=16),
-                        rx.text("Close Window", size="2"),
-                    ),
-                    on_click=rx.call_script(
-                        "if (window.opener) { window.close(); }"
-                    ),
-                    bg="#222222",
-                    color="white",
-                    width="100%",
-                    height="40px",
-                ),
                 spacing="4",
                 padding="1.25rem",
                 width="100%",
@@ -217,5 +193,7 @@ def success_page():
         min_height="100vh",
         padding="1rem",
         bg=BLACK,
+    )),
+        loading=SuccessState.is_fetching,
+        message='Loading check-in...',
     )
-

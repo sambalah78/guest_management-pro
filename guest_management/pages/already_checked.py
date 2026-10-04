@@ -1,5 +1,6 @@
 # guest_management/pages/already_checked.py
 """Page shown when guest is already checked in."""
+from guest_management.components.loading_overlay import eventlah_viewport_page
 
 import reflex as rx
 from guest_management.utils.constants import GOLD, BLACK, DARK_GRAY, LIGHT_GRAY
@@ -8,7 +9,7 @@ from guest_management.state import SuccessState, ScannerState
 
 def already_checked_page():
     """Page shown when guest is already checked in."""
-    return rx.center(
+    return eventlah_viewport_page(rx.center(
         rx.vstack(
             # Elegant decorative line
             rx.hstack(
@@ -171,4 +172,7 @@ def already_checked_page():
             "alignItems": "center",
             "justifyContent": "center",
         },
+    ),
+        loading=ScannerState.is_loading,
+        message='Loading scanner...',
     )
